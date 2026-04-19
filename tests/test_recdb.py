@@ -1,0 +1,259 @@
+"""
+tests/test_recdb.py
+~~~~~~~~~~~~~~~~~~~
+Test suite for recdb.
+
+Structure
+---------
+- ``conn`` fixture is parametrised over both backends so every shared test
+  runs against recfile AND stdlib sqlite3.
+- Tests that assert behaviour specific to one backend are marked with
+  ``pytest.mark`` or placed in dedicated sections.
+- Row access always uses key names (``row["stock"]``), never index
+  (``row[0]``), since that's the common subset of recdb dicts and
+  sqlite3.Row objects.
+
+Run with:  just test
+"""
+
+import sqlite3
+import pytest
+import recdb
+
+# ---------------------------------------------------------------------------
+# Shared fixtures and helpers
+# ---------------------------------------------------------------------------
+
+SEED = [
+    ("Widget A",    "WGT-001", 120,  9.99,  "widgets"),
+    ("Widget B",    "WGT-002",  45, 14.99,  "widgets"),
+    ("Gadget Pro",  "GAD-001",   8, 49.99,  "gadgets"),
+    ("Gadget Lite", "GAD-002",   0, 24.99,  "gadgets"),
+    ("Doohickey",   "DOO-001", 200,  2.49,  "misc"),
+]
+
+CREATE = """
+    CREATE TABLE IF NOT EXISTS items (
+        name     TEXT NOT NULL,
+        sku      TEXT NOT NULL,
+        stock    INTEGER NOT NULL,
+        price    REAL NOT NULL,
+        category TEXT
+    )
+"""
+
+INSERT = "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)"
+
+
+def sqlite_conn(path: str):
+    """Open a raw sqlite3 connection configured to match recdb's interface."""
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row   # makes rows subscriptable by column name
+    return conn
+
+
+@pytest.fixture(params=["recfile", "sqlite"])
+def conn(request, tmp_path):
+    """
+    Parametrised fixture — runs every test against both backends.
+    recfile uses recdb.connect(); sqlite uses stdlib sqlite3 directly.
+    """
+    if request.param == "recfile":
+        c = recdb.connect(str(tmp_path / "items.rec"))
+    else:
+        c = sqlite_conn(str(tmp_path / "inventory.db"))
+
+    c.execute(CREATE)
+    c.executemany(INSERT, SEED)
+    c.commit()
+    yield c
+    c.close()
+
+
+# ---------------------------------------------------------------------------
+# SELECT — shared (both backends)
+# ---------------------------------------------------------------------------
+
+def test_select_all(conn):
+    rows = conn.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 5
+    # Key access works for both dict (recdb) and sqlite3.Row (stdlib)
+    assert rows[0]["name"] is not None
+
+def test_select_projection(conn):
+    rows = conn.execute("SELECT name, stock FROM items").fetchall()
+    assert len(rows) == 5
+    assert rows[0]["name"] is not None
+    assert rows[0]["stock"] is not None
+
+def test_select_where_eq(conn):
+    rows = conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Widget A"
+
+def test_select_where_lt(conn):
+    rows = conn.execute("SELECT * FROM items WHERE stock < 10").fetchall()
+    assert len(rows) == 2
+    assert {rows[0]["sku"], rows[1]["sku"]} == {"GAD-001", "GAD-002"}
+
+def test_select_where_and(conn):
+    rows = conn.execute(
+        "SELECT * FROM items WHERE category = 'widgets' AND stock > 50"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["sku"] == "WGT-001"
+
+def test_select_like_prefix(conn):
+    rows = conn.execute("SELECT * FROM items WHERE name LIKE 'Widget%'").fetchall()
+    assert len(rows) == 2
+
+def test_select_like_contains(conn):
+    rows = conn.execute("SELECT * FROM items WHERE name LIKE '%adget%'").fetchall()
+    assert len(rows) == 2
+
+def test_select_order_asc(conn):
+    rows = conn.execute("SELECT * FROM items ORDER BY stock").fetchall()
+    stocks = [r["stock"] for r in rows]
+    assert stocks == sorted(stocks)
+
+def test_select_order_desc(conn):
+    rows = conn.execute("SELECT * FROM items ORDER BY stock DESC").fetchall()
+    stocks = [r["stock"] for r in rows]
+    assert stocks == sorted(stocks, reverse=True)
+
+def test_select_limit(conn):
+    rows = conn.execute("SELECT * FROM items LIMIT 2").fetchall()
+    assert len(rows) == 2
+
+def test_select_order_and_limit(conn):
+    rows = conn.execute("SELECT * FROM items ORDER BY stock DESC LIMIT 3").fetchall()
+    assert len(rows) == 3
+    assert rows[0]["stock"] >= rows[1]["stock"] >= rows[2]["stock"]
+
+# ---------------------------------------------------------------------------
+# INSERT — shared
+# ---------------------------------------------------------------------------
+
+def test_insert(conn):
+    conn.execute(INSERT, ("Thingamajig", "THG-001", 30, 5.00, "misc"))
+    conn.commit()
+    rows = conn.execute("SELECT * FROM items WHERE sku = 'THG-001'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Thingamajig"
+
+def test_executemany(conn):
+    conn.executemany(INSERT, [
+        ("Bulk A", "BLK-001", 10, 1.00, "bulk"),
+        ("Bulk B", "BLK-002", 20, 2.00, "bulk"),
+        ("Bulk C", "BLK-003", 30, 3.00, "bulk"),
+    ])
+    conn.commit()
+    rows = conn.execute("SELECT * FROM items WHERE category = 'bulk'").fetchall()
+    assert len(rows) == 3
+
+# ---------------------------------------------------------------------------
+# UPDATE — shared
+# ---------------------------------------------------------------------------
+
+def test_update_single_field(conn):
+    conn.execute("UPDATE items SET stock = 999 WHERE sku = 'WGT-001'")
+    conn.commit()
+    row = conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchone()
+    assert row["stock"] == 999
+
+def test_update_multiple_fields(conn):
+    conn.execute("UPDATE items SET stock = 5, price = 99.99 WHERE sku = 'WGT-002'")
+    conn.commit()
+    row = conn.execute("SELECT * FROM items WHERE sku = 'WGT-002'").fetchone()
+    assert row["stock"] == 5
+    assert row["price"] == 99.99
+
+# ---------------------------------------------------------------------------
+# DELETE — shared
+# ---------------------------------------------------------------------------
+
+def test_delete_with_where(conn):
+    conn.execute("DELETE FROM items WHERE stock = 0")
+    conn.commit()
+    assert len(conn.execute("SELECT * FROM items WHERE stock = 0").fetchall()) == 0
+
+def test_delete_all(conn):
+    conn.execute("DELETE FROM items")
+    conn.commit()
+    assert len(conn.execute("SELECT * FROM items").fetchall()) == 0
+
+# ---------------------------------------------------------------------------
+# Cursor behaviour — shared
+# ---------------------------------------------------------------------------
+
+def test_fetchone(conn):
+    row = conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchone()
+    assert row is not None
+    assert row["sku"] == "WGT-001"
+
+def test_fetchmany(conn):
+    rows = conn.execute("SELECT * FROM items").fetchmany(2)
+    assert len(rows) == 2
+    assert rows[0]["name"] is not None   # key access, not isinstance check
+
+def test_parameter_binding(conn):
+    rows = conn.execute("SELECT * FROM items WHERE sku = ?", ("GAD-001",)).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Gadget Pro"
+
+def test_unsupported_join_raises(conn):
+    with pytest.raises(Exception):
+        conn.execute("SELECT * FROM items JOIN other ON items.sku = other.sku")
+
+# ---------------------------------------------------------------------------
+# recdb-specific behaviour
+# (stdlib sqlite3 behaves differently here — documented in COMPAT.md)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def recfile_conn(tmp_path):
+    c = recdb.connect(str(tmp_path / "items.rec"))
+    c.execute(CREATE)
+    c.executemany(INSERT, SEED)
+    c.commit()
+    yield c
+    c.close()
+
+
+def test_rows_are_dicts(recfile_conn):
+    """recdb always returns plain dicts. sqlite3 returns sqlite3.Row."""
+    rows = recfile_conn.execute("SELECT * FROM items").fetchall()
+    assert all(isinstance(r, dict) for r in rows)
+
+def test_rowcount_select(recfile_conn):
+    """recdb returns len(rows) for SELECT. sqlite3 returns -1."""
+    cur = recfile_conn.execute("SELECT * FROM items")
+    assert cur.rowcount == 5
+
+def test_rowcount_delete(recfile_conn):
+    """recdb reports rows deleted. sqlite3 also does, so this could be shared —
+    kept here to make the recdb contract explicit."""
+    cur = recfile_conn.execute("DELETE FROM items WHERE category = 'widgets'")
+    assert cur.rowcount == 2
+
+def test_context_manager_closes(tmp_path):
+    """recdb's context manager commits and closes. sqlite3's only commits."""
+    path = str(tmp_path / "ctx.rec")
+    with recdb.connect(path) as c:
+        c.execute("CREATE TABLE IF NOT EXISTS t (x TEXT NOT NULL)")
+        c.execute("INSERT INTO t (x) VALUES (?)", ("hello",))
+    # Re-open and verify data was committed
+    c2 = recdb.connect(path)
+    assert len(c2.execute("SELECT * FROM t").fetchall()) == 1
+    c2.close()
+
+def test_connect_rejects_non_rec(tmp_path):
+    """recdb.connect() only accepts .rec files — SQLite users use sqlite3 directly."""
+    with pytest.raises(ValueError, match=r"\.rec"):
+        recdb.connect(str(tmp_path / "inventory.db"))
+
+def test_connect_infers_table_from_stem(tmp_path):
+    """The file stem becomes the default table name."""
+    c = recdb.connect(str(tmp_path / "products.rec"))
+    assert isinstance(c, recdb.RecfileConnection)
+    c.close()
