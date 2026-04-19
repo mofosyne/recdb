@@ -3,6 +3,8 @@
 A PEP 249-style Python DB-API adapter that supports **recfile** behind an python module style interface.
 This is intended as an alternative to **SQLite** where human-readable flat file databases is preferred.
 
+[Refer to this wikipedia article about recfiles and recutils](https://en.wikipedia.org/wiki/Recutils)
+
 ## Why?
 
 Recfiles are plain text — human-readable, diffable with `git diff`, editable
