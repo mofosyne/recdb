@@ -1,4 +1,4 @@
-# recdb
+# RecDB
 
 A PEP 249-style Python DB-API adapter that supports **recfile** behind an python module style interface.
 This is intended as an alternative to **SQLite** where human-readable flat file databases is preferred.
@@ -116,3 +116,16 @@ python inventory_demo.py          # runs both backends
 RECDB_BACKEND=recfile python inventory_demo.py
 RECDB_BACKEND=sqlite  python inventory_demo.py
 ```
+
+## Stability and 1.0 Release Criteria
+
+RecDB is a hobby project and does not follow a fixed release schedule.
+
+The 1.0 release will be considered when the project is successfully used in other projects over a period of time in a stable fashion.
+If this is useful for you, please note your project down in **Known users / projects** in this readme.
+
+Until then, breaking changes may occur in minor versions.
+
+## Known users / projects
+
+**Send your PR to add your project here! This will help in tracking readiness for v1.0 release.**

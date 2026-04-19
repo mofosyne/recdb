@@ -65,9 +65,9 @@ DELETE FROM table [WHERE expr]
 CREATE TABLE [IF NOT EXISTS] table (col type ...)
 ```
 
-Anything outside this subset raises `AssertionError`, mirroring how
-`sqlite3` raises `OperationalError` on unsupported syntax. The intent is
-to fail loudly and early rather than silently produce wrong results.
+Anything outside this subset raises `AssertionError` with a descriptive message. 
+This is intentionally aggressive: unsupported SQL should fail immediately rather
+than degrade into partial or incorrect results.
 
 ### recutils mapping
 
@@ -248,6 +248,63 @@ headers from `.rec` files. Useful for tooling and ORMs.
 `UPDATE SET a=1, b=2` currently makes two `recset` subprocess calls.
 recutils supports multiple `-f/-s` pairs in one call; the backend just
 needs to build the command correctly.
+
+**Lightweight index files**
+recdb currently performs a full scan of the `.rec` file for `SELECT`
+queries with a `WHERE` clause. For the intended use case (small datasets),
+this is acceptable and keeps the implementation simple.
+
+However, for larger recfiles a lightweight indexing mechanism could
+significantly reduce lookup time for common queries such as:
+
+    SELECT * FROM items WHERE sku = 'WGT-001'
+
+One possible approach would be a sidecar index file:
+
+    inventory.rec
+    inventory.rec.idx
+
+The index file could store a mapping of indexed fields to record
+positions, for example:
+
+```json
+{
+  "indexed_fields": ["sku"],
+  "fields": {
+    "sku": {
+      "WGT-001": [0],
+      "WGT-002": [3]
+    }
+  }
+}
+```
+
+When executing a query with a simple equality predicate, the backend
+could consult the index to obtain candidate record positions rather
+than scanning the entire file.
+
+This approach has several advantages:
+
+- preserves the `.rec` file as the canonical human-readable source
+- keeps indexing optional and easy to rebuild
+- avoids introducing a full database engine
+- maintains compatibility with manual editing and Git workflows
+
+Index maintenance could be handled by rebuilding the index after any
+write operation (`INSERT`, `UPDATE`, `DELETE`). Given the small dataset
+sizes recdb targets, rebuilding the index is often simpler and safer
+than attempting incremental updates.
+
+This optimisation is intentionally not implemented in the current
+version because:
+
+- it adds complexity to a deliberately minimal project
+- many datasets will never grow large enough to benefit
+- the recommended upgrade path for larger datasets is switching to
+  SQLite
+
+Future contributors interested in improving query performance without
+changing recdb’s core philosophy may find this a reasonable extension.
 
 ### Longer-term
 
