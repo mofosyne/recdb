@@ -6,8 +6,8 @@ Runs the same inventory operations against recfile and stdlib sqlite3,
 demonstrating that application code is identical between the two.
 
     python examples/inventory_demo.py              # both
-    RECDB_BACKEND=recfile python examples/...
-    RECDB_BACKEND=sqlite  python examples/...
+    DBTYPE=recfile python examples/...
+    DBTYPE=sqlite  python examples/...
 """
 
 import os
@@ -106,7 +106,7 @@ def run(conn, label: str):
 
 
 if __name__ == "__main__":
-    backend = os.environ.get("RECDB_BACKEND", "both").lower()
+    backend = os.environ.get("DBTYPE", "both").lower()
 
     with tempfile.TemporaryDirectory() as tmp:
         if backend in ("recfile", "both"):

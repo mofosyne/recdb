@@ -40,11 +40,11 @@ demo:
 
 # Run the inventory demo — recfile backend only
 demo-recfile:
-    RECDB_BACKEND=recfile {{python}} examples/inventory_demo.py
+    DBTYPE=recfile {{python}} examples/inventory_demo.py
 
 # Run the demo — sqlite backend only
 demo-sqlite:
-    RECDB_BACKEND=sqlite {{python}} examples/inventory_demo.py
+    DBTYPE=sqlite {{python}} examples/inventory_demo.py
 
 # Check recutils is installed (required for recfile backend)
 check-recutils:
@@ -69,7 +69,7 @@ publish-test:
 # Upload to PyPI
 publish:
     {{pip}} install twine -q
-    {{python}} -m twine upload dist/*
+    {{python}} -m twine upload --verbose dist/*
 
 # Remove venv and build artifacts
 clean:
