@@ -1,39 +1,34 @@
-# RecDB
+# recdb
 
-A PEP 249-style Python DB-API adapter that supports **recfile** behind an python module style interface.
-This is intended as an alternative to **SQLite** where human-readable flat file databases is preferred.
+A PEP 249-style Python DB-API adapter for **GNU recfiles** — plain-text, human-readable, `git diff`-able databases.
 
-[Refer to this wikipedia article about recfiles and recutils](https://en.wikipedia.org/wiki/Recutils)
+[Wikipedia: Recutils / Recfiles](https://en.wikipedia.org/wiki/Recutils)
 
 ## Why?
 
-Recfiles are plain text — human-readable, diffable with `git diff`, editable
-with any text editor, queryable with standard Unix tools. For small projects
-where textual transparency matters more than performance, they're a compelling
-alternative to binary database files.
+Recfiles are plain text — human-readable, diffable with `git diff`, editable with any text editor, queryable with standard Unix tools. For small projects where textual transparency matters more than performance, they're a compelling alternative to a binary database file like SQLite.
 
-`recdb` lets you use a simple SQL subset against recfiles while keeping a clean
-migration path to SQLite when you outgrow them.
+`recdb` lets you use a familiar SQL subset against recfiles, with a clean one-line migration path to SQLite when you outgrow them.
 
 ## Installation
 
 ```bash
-pip install sqlparse       # only dependency beyond stdlib
-apt install recutils       # required for the recfile backend
+pip install recdb
+apt install recutils        # or: brew install recutils
 ```
 
 ## Quickstart
 
 ```python
-from recdb import connect
+# ── Recfile backend (plain text, human-readable) ──────────────────────────────
+import recdb
+conn = recdb.connect("inventory.rec")
 
-# ── Recfile backend (text files, human-readable) ─────────────────────────────
-conn = connect("recfile", "./data")       # directory of .rec files
+# ── SQLite backend as an example of migration from Recfile ──────────────────
+import sqlite3
+conn = sqlite3.connect("inventory.db")
 
-# ── SQLite backend (drop-in swap) ────────────────────────────────────────────
-conn = connect("sqlite", "inventory.db")
-
-# ── Identical API from here ──────────────────────────────────────────────────
+# ── Identical API from here ───────────────────────────────────────────────────
 conn.execute(
     "INSERT INTO items (name, sku, stock, price) VALUES (?, ?, ?, ?)",
     ("Widget", "WGT-001", 50, 9.99)
@@ -42,46 +37,49 @@ conn.commit()
 
 cur = conn.execute("SELECT * FROM items WHERE stock > 0")
 for row in cur.fetchall():
-    print(row)  # dict: {'name': 'Widget', 'sku': 'WGT-001', ...}
+    print(row["name"], row["stock"])
 
 conn.close()
 ```
 
+Switching from recfile to SQLite is a one-line change — replace `recdb.connect("inventory.rec")` with `sqlite3.connect("inventory.db")` and the rest of your code stays the same.
+
 ## Context manager
 
 ```python
-with connect("recfile", "./data") as conn:
+with recdb.connect("inventory.rec") as conn:
     conn.execute("UPDATE items SET stock = 45 WHERE sku = 'WGT-001'")
 # commit() called automatically on clean exit
 ```
 
 ## Supported SQL
 
-| Statement                | Example                                                             |
-|--------------------------|---------------------------------------------------------------------|
-| `SELECT`                 | `SELECT * FROM items`                                               |
-| `SELECT` with projection | `SELECT name, stock FROM items`                                     |
-| `SELECT` with `WHERE`    | `SELECT * FROM items WHERE stock < 10`                              |
-| `INSERT`                 | `INSERT INTO items (name, sku, stock) VALUES ('X', 'X-1', 5)`       |
-| `UPDATE`                 | `UPDATE items SET stock = 50 WHERE sku = 'WGT-001'`                 |
-| `DELETE`                 | `DELETE FROM items WHERE stock = 0`                                 |
-| Parameter binding        | `cursor.execute("SELECT * FROM items WHERE sku = ?", ("WGT-001",))` |
+| Statement         | Example                                                             |
+|-------------------|---------------------------------------------------------------------|
+| `SELECT`          | `SELECT * FROM items`                                               |
+| Column projection | `SELECT name, stock FROM items`                                     |
+| `WHERE`           | `SELECT * FROM items WHERE stock < 10`                              |
+| `ORDER BY`        | `SELECT * FROM items ORDER BY price DESC`                           |
+| `LIMIT`           | `SELECT * FROM items LIMIT 5`                                       |
+| `INSERT`          | `INSERT INTO items (name, sku, stock) VALUES ('X', 'X-1', 5)`       |
+| `UPDATE`          | `UPDATE items SET stock = 50 WHERE sku = 'WGT-001'`                 |
+| `DELETE`          | `DELETE FROM items WHERE stock = 0`                                 |
+| `CREATE TABLE`    | `CREATE TABLE items (name text, sku text, stock int, price real)`   |
+| Parameter binding | `cursor.execute("SELECT * FROM items WHERE sku = ?", ("WGT-001",))` |
 
-### WHERE clause
+### WHERE clause operators support
 
-- Operators: `=  !=  <  >  <=  >=`
-- `AND` between conditions is supported
-- `OR`, subqueries, and nesting are **not** supported in the recfile backend
-  (AssertionError raised)
+`=  !=  <  >  <=  >=  LIKE  AND`
 
-### Unsupported (recfile backend raises `AssertionError`)
+`OR`, `IN`, subqueries, `JOIN`, `GROUP BY`, `UNION`, and `HAVING` are not currently supported in the recfile backend (raises `AssertionError`).
 
-`JOIN`, `GROUP BY`, `ORDER BY`, `LIMIT`, `UNION`, `HAVING`, subqueries.
+## File layout
 
-## Recfile schema
+`recdb.connect()` takes a path to a single `.rec` file.
 
-Each table maps to a `.rec` file in your data directory. You can add type
-hints and constraints using standard recutils directives:
+Multiple tables are supported within one file using recutils' native multi-type format — multiple `%rec:` blocks in a single file.
+
+Example `.rec` file with two tables:
 
 ```
 %rec: items
@@ -93,39 +91,41 @@ name: Widget A
 sku: WGT-001
 stock: 120
 price: 9.99
+
+name: Widget B
+sku: WGT-002
+stock: 5
+price: 14.50
+
+%rec: suppliers
+%mandatory: name contact
+
+name: Acme Corp
+contact: acme@example.com
 ```
 
-## File layout
+## Rows are dicts
 
-```
-recdb/
-├── src/recdb/
-│   ├── __init__.py     # connect() entry point
-│   ├── base.py         # BaseConnection / BaseCursor ABCs
-│   ├── parser.py       # SQL → AST translator (used by recfile backend)
-│   ├── recfile.py      # RecfileConnection / RecfileCursor
-├── data/
-│   └── items.rec       # sample inventory data
-└── inventory_demo.py   # demo: runs both backends side by side
+The recfile backend returns rows as `dict`. Column access by name is always safe:
+
+```python
+row = cur.fetchone()
+print(row["name"])    # works
+print(row["stock"])   # works
 ```
 
-## Running the demo
+See [COMPATIBILITY.md](COMPATIBILITY.md) for a full table of deviations from stdlib `sqlite3`.
 
-```bash
-python inventory_demo.py          # runs both backends
-RECDB_BACKEND=recfile python inventory_demo.py
-RECDB_BACKEND=sqlite  python inventory_demo.py
-```
+## Requirements
 
-## Stability and 1.0 Release Criteria
+- Python 3.9+
+- `sqlparse` (installed automatically via pip)
+- GNU `recutils` (`recsel`, `recins`, `recset`, `recdel`) installed separately
 
-RecDB is a hobby project and does not follow a fixed release schedule.
+## Stability and 1.0 release
 
-The 1.0 release will be considered when the project is successfully used in other projects over a period of time in a stable fashion.
-If this is useful for you, please note your project down in **Known users / projects** in this readme.
-
-Until then, breaking changes may occur in minor versions.
+RecDB is a hobby project without a fixed release schedule. The 1.0 release will be considered when the project has been used successfully in other projects over time. Until then, minor versions may include breaking changes.
 
 ## Known users / projects
 
-**Send your PR to add your project here! This will help in tracking readiness for v1.0 release.**
+**Send a PR to add your project here — this helps track readiness for v1.0.**
