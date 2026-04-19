@@ -19,11 +19,11 @@ application code works unchanged against either.
 
 from .base import BaseConnection, BaseCursor
 from .recfile import RecfileConnection
+import shutil
 
 __all__ = ["connect", "RecfileConnection", "BaseConnection", "BaseCursor"]
 
 _REC_EXTENSIONS = {".rec"}
-
 
 def connect(path: str) -> "RecfileConnection":
     """
@@ -41,6 +41,11 @@ def connect(path: str) -> "RecfileConnection":
     from pathlib import Path
     p = Path(path)
     ext = p.suffix.lower()
+
+    if shutil.which("recsel") is None:
+        raise RuntimeError(
+            "GNU recutils is required but not found in PATH."
+        )
 
     if ext not in _REC_EXTENSIONS:
         raise ValueError(
