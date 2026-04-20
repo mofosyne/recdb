@@ -38,7 +38,7 @@ def fmt_row(row) -> str:
     )
 
 
-# ── This function is identical for both backends ───────────────────────────
+# ── This function is identical for both db_types ───────────────────────────
 def run(conn, label: str):
     print(f"\n{'═' * 58}")
     print(f"  {label}")
@@ -106,11 +106,20 @@ def run(conn, label: str):
 
 
 if __name__ == "__main__":
-    backend = os.environ.get("DBTYPE", "both").lower()
+    db_type = os.environ.get("DBTYPE", "both").lower()
+    db_path = os.environ.get("DB_PATH", None)
 
     with tempfile.TemporaryDirectory() as tmp:
-        if backend in ("recfile", "both"):
-            run(recdb.connect(os.path.join(tmp, "inventory.rec")), "RECFILE")
 
-        if backend in ("sqlite", "both"):
+        if db_path:
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            tmp = db_path
+
+        if db_type in ("recfile", "both"):
+            run(recdb.connect(os.path.join(tmp, "inventory.rec")), "RECFILE (inventory.rec)")
+
+        if db_type in ("recfile-dir", "both"):
+            run(recdb.connect_dir(os.path.join(tmp, "data")), "RECFILE (./data/*.rec)")
+
+        if db_type in ("sqlite", "both"):
             run(sqlite_conn(os.path.join(tmp, "inventory.db")), "SQLITE  (stdlib sqlite3)")

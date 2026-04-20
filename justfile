@@ -36,15 +36,19 @@ test-sqlite:
 
 # Run the inventory demo
 demo:
-    {{python}} examples/inventory_demo.py
+    DB_PATH=./examples/data/ {{python}} examples/inventory_demo.py
 
 # Run the inventory demo — recfile backend only
 demo-recfile:
-    DBTYPE=recfile {{python}} examples/inventory_demo.py
+    DBTYPE=recfile DB_PATH=./examples/data/ {{python}} examples/inventory_demo.py
+
+# Run the inventory demo — recfile backend only
+demo-recfile-dir:
+    DBTYPE=recfile-dir DB_PATH=./examples/data/ {{python}} examples/inventory_demo.py
 
 # Run the demo — sqlite backend only
 demo-sqlite:
-    DBTYPE=sqlite {{python}} examples/inventory_demo.py
+    DBTYPE=sqlite DB_PATH=./examples/data/ {{python}} examples/inventory_demo.py
 
 # Check recutils is installed (required for recfile backend)
 check-recutils:
