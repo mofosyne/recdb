@@ -20,11 +20,15 @@ apt install recutils        # or: brew install recutils
 ## Quickstart
 
 ```python
-# ── Recfile backend (plain text, human-readable) ──────────────────────────────
 import recdb
+
+# ── Single-file recfile backend (one .rec file, multiple %rec: blocks) ────────
 conn = recdb.connect("inventory.rec")
 
-# ── SQLite backend as an example of migration from Recfile ──────────────────
+# ── Directory mode (one .rec file per table) ──────────────────────────────────
+conn = recdb.connect_dir("./data")          # items → ./data/items.rec, etc.
+
+# ── SQLite backend (use stdlib directly — no wrapper needed) ──────────────────
 import sqlite3
 conn = sqlite3.connect("inventory.db")
 
@@ -42,15 +46,24 @@ for row in cur.fetchall():
 conn.close()
 ```
 
-Switching from recfile to SQLite is a one-line change — replace `recdb.connect("inventory.rec")` with `sqlite3.connect("inventory.db")` and the rest of your code stays the same.
+Switching from recfile to SQLite is a one-line change — replace `recdb.connect(...)` with `sqlite3.connect("inventory.db")` and the rest of your code stays the same.
 
 ## Context manager
 
 ```python
 with recdb.connect("inventory.rec") as conn:
     conn.execute("UPDATE items SET stock = 45 WHERE sku = 'WGT-001'")
-# commit() called automatically on clean exit
 ```
+
+Works the same with connect_dir()
+
+```python
+with recdb.connect_dir("./data") as conn:
+    conn.execute("UPDATE items SET stock = 45 WHERE sku = 'WGT-001'")
+```
+
+* Note: commit() called automatically on clean exit
+
 
 ## Supported SQL
 
@@ -67,7 +80,7 @@ with recdb.connect("inventory.rec") as conn:
 | `CREATE TABLE`    | `CREATE TABLE items (name text, sku text, stock int, price real)`   |
 | Parameter binding | `cursor.execute("SELECT * FROM items WHERE sku = ?", ("WGT-001",))` |
 
-### WHERE clause operators support
+### WHERE clause operators
 
 `=  !=  <  >  <=  >=  LIKE  AND`
 
@@ -75,11 +88,39 @@ with recdb.connect("inventory.rec") as conn:
 
 ## File layout
 
-`recdb.connect()` takes a path to a single `.rec` file.
+recdb supports two file layouts:
 
-Multiple tables are supported within one file using recutils' native multi-type format — multiple `%rec:` blocks in a single file.
+**Single-file mode** — one `.rec` file holds all tables as separate `%rec:` blocks:
 
-Example `.rec` file with two tables:
+```
+project/
+├── inventory.rec    # %rec: items block + %rec: suppliers block + ...
+└── app.py
+```
+
+```python
+conn = recdb.connect("inventory.rec")
+conn.execute("SELECT * FROM items")
+conn.execute("SELECT * FROM suppliers")
+```
+
+**Directory mode** — each table gets its own `.rec` file:
+
+```
+project/
+├── data/
+│   ├── items.rec
+│   └── suppliers.rec
+└── app.py
+```
+
+```python
+conn = recdb.connect_dir("./data")
+conn.execute("SELECT * FROM items")      # → ./data/items.rec
+conn.execute("SELECT * FROM suppliers")  # → ./data/suppliers.rec
+```
+
+Example `.rec` file content:
 
 ```
 %rec: items

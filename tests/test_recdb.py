@@ -257,3 +257,148 @@ def test_connect_infers_table_from_stem(tmp_path):
     c = recdb.connect(str(tmp_path / "products.rec"))
     assert isinstance(c, recdb.RecfileConnection)
     c.close()
+
+
+# ---------------------------------------------------------------------------
+# Directory mode — connect_dir()
+# ---------------------------------------------------------------------------
+
+CREATE_ITEMS = """
+    CREATE TABLE IF NOT EXISTS items (
+        name     TEXT NOT NULL,
+        sku      TEXT NOT NULL,
+        stock    INTEGER NOT NULL,
+        price    REAL NOT NULL,
+        category TEXT
+    )
+"""
+
+CREATE_SUPPLIERS = """
+    CREATE TABLE IF NOT EXISTS suppliers (
+        name    TEXT NOT NULL,
+        contact TEXT NOT NULL
+    )
+"""
+
+
+@pytest.fixture
+def dir_conn(tmp_path):
+    """Directory-mode connection — tables live in separate .rec files."""
+    c = recdb.connect_dir(str(tmp_path / "db"))
+    c.execute(CREATE_ITEMS)
+    c.executemany(INSERT, SEED)
+    c.commit()
+    yield c
+    c.close()
+
+
+def test_dir_connect_creates_directory(tmp_path):
+    """connect_dir() creates the directory if it does not exist."""
+    d = tmp_path / "newdir"
+    assert not d.exists()
+    conn = recdb.connect_dir(str(d))
+    assert d.exists()
+    conn.close()
+
+
+def test_dir_select_all(dir_conn, tmp_path):
+    rows = dir_conn.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 5
+
+
+def test_dir_select_where(dir_conn):
+    rows = dir_conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Widget A"
+
+
+def test_dir_insert(dir_conn):
+    dir_conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("New Item", "NEW-001", 10, 5.00, "misc")
+    )
+    dir_conn.commit()
+    rows = dir_conn.execute("SELECT * FROM items WHERE sku = 'NEW-001'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "New Item"
+
+
+def test_dir_update(dir_conn):
+    dir_conn.execute("UPDATE items SET stock = 999 WHERE sku = 'WGT-001'")
+    dir_conn.commit()
+    row = dir_conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchone()
+    assert row["stock"] == 999
+
+
+def test_dir_delete(dir_conn):
+    dir_conn.execute("DELETE FROM items WHERE stock = 0")
+    dir_conn.commit()
+    rows = dir_conn.execute("SELECT * FROM items WHERE stock = 0").fetchall()
+    assert len(rows) == 0
+
+
+def test_dir_multiple_tables(tmp_path):
+    """Each table maps to a separate .rec file in the directory."""
+    db_dir = str(tmp_path / "multidb")
+    conn = recdb.connect_dir(db_dir)
+
+    conn.execute(CREATE_ITEMS)
+    conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("Widget A", "WGT-001", 50, 9.99, "widgets")
+    )
+
+    conn.execute(CREATE_SUPPLIERS)
+    conn.execute(
+        "INSERT INTO suppliers (name, contact) VALUES (?, ?)",
+        ("Acme Corp", "acme@example.com")
+    )
+    conn.commit()
+
+    items = conn.execute("SELECT * FROM items").fetchall()
+    suppliers = conn.execute("SELECT * FROM suppliers").fetchall()
+
+    assert len(items) == 1
+    assert items[0]["name"] == "Widget A"
+    assert len(suppliers) == 1
+    assert suppliers[0]["name"] == "Acme Corp"
+
+    # Verify separate .rec files were created
+    from pathlib import Path
+    assert (Path(db_dir) / "items.rec").exists()
+    assert (Path(db_dir) / "suppliers.rec").exists()
+
+    conn.close()
+
+
+def test_dir_context_manager(tmp_path):
+    """connect_dir() works as a context manager."""
+    db_dir = str(tmp_path / "ctx_db")
+    with recdb.connect_dir(db_dir) as conn:
+        conn.execute(CREATE_ITEMS)
+        conn.execute(
+            "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+            ("Widget A", "WGT-001", 50, 9.99, "widgets")
+        )
+
+    # Re-open and verify data persisted
+    conn2 = recdb.connect_dir(db_dir)
+    rows = conn2.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 1
+    conn2.close()
+
+
+def test_dir_order_by(dir_conn):
+    rows = dir_conn.execute("SELECT * FROM items ORDER BY stock DESC").fetchall()
+    stocks = [r["stock"] for r in rows]
+    assert stocks == sorted(stocks, reverse=True)
+
+
+def test_dir_no_default_table(tmp_path):
+    """connect_dir() has no default table — table name must be explicit in SQL."""
+    conn = recdb.connect_dir(str(tmp_path / "db"))
+    conn.execute(CREATE_ITEMS)
+    # This should work fine — table name is in the SQL
+    rows = conn.execute("SELECT * FROM items").fetchall()
+    assert rows == []
+    conn.close()

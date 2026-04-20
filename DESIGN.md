@@ -25,15 +25,22 @@ few line changes and a python module import.
 ```
 Application code
       │
-      ├── recdb.connect("inventory.rec")
+      ├── recdb.connect("inventory.rec")     ← single-file mode
       │         │
       │         ▼
       │   BaseConnection (ABC)    ← documents the sqlite3-compatible interface
       │   BaseCursor (ABC)
       │         │
       │         └── RecfileConnection   ← GNU recutils subprocess calls
+      │             ├── default_table = file stem (single-file mode)
+      │             ├── default_table = None   (directory mode)
       │             └── RecfileCursor
       │                 └── parser.py  ← SQL subset → AST → recutils args
+      │
+      ├── recdb.connect_dir("./data")        ← directory mode
+      │         │
+      │         │
+      │         └── RecfileConnection (same class, no default_table)
       │
       └── sqlite3.connect("inventory.db")   ← stdlib, used directly by callers
               conn.row_factory = sqlite3.Row
@@ -103,26 +110,30 @@ when schemas evolve. See `COMPAT.md` for the full deviation table.
 
 ## Decisions and tradeoffs
 
-### Single file per connection, not directory of files
+### Two connection modes: single-file and directory
 
-`recdb.connect("inventory.rec")` points to a single file. Multiple tables
-are supported within that file via recutils' native multi-type format
-(multiple `%rec:` blocks in one file).
+**Single-file mode** (`recdb.connect("inventory.rec")`) points to one `.rec`
+file. Multiple tables are supported within that file via recutils' native
+multi-type format (multiple `%rec:` blocks). This is the recommended mode for
+most projects and mirrors the `sqlite3.connect()` call exactly.
 
-A directory-of-files mode was considered and rejected for now:
+**Directory mode** (`recdb.connect_dir("./data")`) maps each table to a
+separate `.rec` file in the directory — `SELECT * FROM items` reads
+`./data/items.rec`, `SELECT * FROM orders` reads `./data/orders.rec`, and so
+on. The directory is created if it does not exist.
 
-- It complicates the `connect()` API — a path to a `.rec` file is
-  unambiguous; a path to a directory is not.
-- It encourages splitting tables in ways that recutils' own format
-  doesn't require.
-- The signal to split tables into separate files is roughly the same
-  signal to move to SQLite: when the data gets complex enough to need
-  it, the backend switch is one line of code.
+Directory mode uses the same `RecfileConnection` class with `default_table=None`.
+The two entry points keep the APIs unambiguous: `connect()` only accepts a
+`.rec` path, and `connect_dir()` only accepts a directory path.
 
-If a future contributor wants to add directory mode, the cleanest approach
-is probably a separate `RecfileDirectoryConnection` class that
-`connect()` routes to when given a directory path, keeping the single-file
-path unaffected.
+The tradeoffs between modes:
+
+- Single-file is simpler and keeps everything in one place for version control.
+- Directory mode is better for teams who want to diff individual tables
+  separately or manage tables with very different lifecycles.
+- The signal to move from either recfile mode to SQLite is when you need
+  joins, transactions, or high write throughput — at that point the switch
+  is a one-line change.
 
 ### `assert` instead of a custom exception hierarchy
 
@@ -156,7 +167,7 @@ for the considered alternative.
 
 ### No SQLite wrapper
 
-Earlier initial unreleased attempt of recdb included a `SQLiteConnection` class that wrapped
+Earlier versions of recdb included a `SQLiteConnection` class that wrapped
 stdlib `sqlite3` to return dicts instead of tuples. It was removed because:
 
 - It introduced subtle behavioural differences from raw `sqlite3` that could
@@ -307,12 +318,6 @@ Future contributors interested in improving query performance without
 changing recdb’s core philosophy may find this a reasonable extension.
 
 ### Longer-term
-
-**Directory-of-files mode**
-A `RecfileDirectoryConnection("./data/")` where each table maps to a
-separate `.rec` file. Useful for teams who want to version-control tables
-independently. Should be a separate class, not a change to the existing
-`connect()` path.
 
 **Migration helper**
 `recdb.migrate("inventory.rec", "inventory.db")` — copy all data from
