@@ -107,7 +107,7 @@ def run(conn, label: str):
 
 if __name__ == "__main__":
     db_type = os.environ.get("DBTYPE", "both").lower()
-    db_path = os.environ.get("DB_PATH", None)
+    db_path = os.environ.get("DBPATH", None)
 
     with tempfile.TemporaryDirectory() as tmp:
 

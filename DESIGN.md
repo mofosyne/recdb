@@ -33,7 +33,6 @@ Application code
       │         │
       │         └── RecfileConnection   ← GNU recutils subprocess calls
       │             ├── default_table = file stem (single-file mode)
-      │             ├── default_table = None   (directory mode)
       │             └── RecfileCursor
       │                 └── parser.py  ← SQL subset → AST → recutils args
       │
@@ -41,6 +40,9 @@ Application code
       │         │
       │         │
       │         └── RecfileConnection (same class, no default_table)
+      │             ├── default_table = None   (directory mode)
+      │             └── RecfileCursor
+      │                 └── parser.py  ← SQL subset → AST → recutils args
       │
       └── sqlite3.connect("inventory.db")   ← stdlib, used directly by callers
               conn.row_factory = sqlite3.Row

@@ -201,6 +201,17 @@ def test_parameter_binding(conn):
     assert len(rows) == 1
     assert rows[0]["name"] == "Gadget Pro"
 
+def test_apostrophe_in_value(conn):
+    """Values containing single quotes must round-trip correctly."""
+    conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("O'Brien's Widget", "OBR-001", 5, 9.99, "misc")
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM items WHERE sku = 'OBR-001'").fetchone()
+    assert row is not None
+    assert row["name"] == "O'Brien's Widget"
+
 def test_unsupported_join_raises(conn):
     with pytest.raises(Exception):
         conn.execute("SELECT * FROM items JOIN other ON items.sku = other.sku")

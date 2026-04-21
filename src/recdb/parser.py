@@ -76,7 +76,8 @@ def _quote(value: Any) -> str:
         return "1" if value else "0"
     if isinstance(value, (int, float)):
         return str(value)
-    return f"'{str(value)}'"
+    # Escape embedded single quotes using standard SQL doubling: ' → ''
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +228,20 @@ def _parse_insert(stmt) -> dict:
 
 
 def _split_values(s: str) -> list[str]:
-    vals, current, in_quote, quote_char = [], [], False, None
-    for ch in s:
+    """Split a comma-separated VALUES list, respecting quoted strings.
+    Handles SQL-style escaped single quotes ('') inside quoted values."""
+    vals, current = [], []
+    in_quote, quote_char = False, None
+    i = 0
+    while i < len(s):
+        ch = s[i]
         if in_quote:
+            # Check for escaped quote: two consecutive quote chars (e.g. Cat''s)
+            if ch == quote_char and i + 1 < len(s) and s[i + 1] == quote_char:
+                current.append(ch)
+                current.append(ch)
+                i += 2
+                continue
             current.append(ch)
             if ch == quote_char:
                 in_quote = False
@@ -237,9 +249,11 @@ def _split_values(s: str) -> list[str]:
             in_quote, quote_char = True, ch
             current.append(ch)
         elif ch == ",":
-            vals.append("".join(current).strip()); current = []
+            vals.append("".join(current).strip())
+            current = []
         else:
             current.append(ch)
+        i += 1
     if current:
         vals.append("".join(current).strip())
     return vals
@@ -351,7 +365,9 @@ def _unquote(s: str) -> Any:
         return None
     if (s.startswith("'") and s.endswith("'")) or \
        (s.startswith('"') and s.endswith('"')):
-        return s[1:-1]
+        inner = s[1:-1]
+        # Unescape SQL-doubled single quotes: '' -> '
+        return inner.replace("''", "'")
     try:
         return int(s)
     except ValueError:
