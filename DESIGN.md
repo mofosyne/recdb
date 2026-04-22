@@ -33,16 +33,13 @@ Application code
       │         │
       │         └── RecfileConnection   ← GNU recutils subprocess calls
       │             ├── default_table = file stem (single-file mode)
-      │             └── RecfileCursor
-      │                 └── parser.py  ← SQL subset → AST → recutils args
-      │
-      ├── recdb.connect_dir("./data")        ← directory mode
-      │         │
-      │         │
-      │         └── RecfileConnection (same class, no default_table)
       │             ├── default_table = None   (directory mode)
       │             └── RecfileCursor
       │                 └── parser.py  ← SQL subset → AST → recutils args
+      │
+      ├── recdb.connect("./data")             ← directory mode
+      │         │
+      │         └── RecfileConnection (same class, no default_table)
       │
       └── sqlite3.connect("inventory.db")   ← stdlib, used directly by callers
               conn.row_factory = sqlite3.Row
@@ -114,19 +111,20 @@ when schemas evolve. See `COMPAT.md` for the full deviation table.
 
 ### Two connection modes: single-file and directory
 
-**Single-file mode** (`recdb.connect("inventory.rec")`) points to one `.rec`
-file. Multiple tables are supported within that file via recutils' native
-multi-type format (multiple `%rec:` blocks). This is the recommended mode for
-most projects and mirrors the `sqlite3.connect()` call exactly.
+`recdb.connect()` infers the mode from the path extension:
 
-**Directory mode** (`recdb.connect_dir("./data")`) maps each table to a
-separate `.rec` file in the directory — `SELECT * FROM items` reads
-`./data/items.rec`, `SELECT * FROM orders` reads `./data/orders.rec`, and so
-on. The directory is created if it does not exist.
+- **Single-file mode** — path ends in `.rec` (e.g. `connect("inventory.rec")`).
+  All tables are stored as `%rec:` blocks inside that one file. The file stem
+  is used as the default table name when none is specified in SQL.
 
-Directory mode uses the same `RecfileConnection` class with `default_table=None`.
-The two entry points keep the APIs unambiguous: `connect()` only accepts a
-`.rec` path, and `connect_dir()` only accepts a directory path.
+- **Directory mode** — path has no `.rec` extension (e.g. `connect("./data")`).
+  Each table maps to a separate `.rec` file in the directory, which is created
+  if it does not exist. Table names must be explicit in every SQL statement.
+
+Both modes use the same `RecfileConnection` class. The distinction is captured
+in two constructor parameters: `single_file` (the fixed path to target for all
+operations) and `default_table` (the table name assumed when SQL omits it).
+Directory mode sets both to `None`.
 
 The tradeoffs between modes:
 

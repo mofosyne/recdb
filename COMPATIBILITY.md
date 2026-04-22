@@ -6,9 +6,12 @@ so application code works unchanged against either backend.
 ## Switching
 
 ```python
-# recfile backend
+# recfile — single-file mode (all tables in one .rec file)
 import recdb
 conn = recdb.connect("inventory.rec")
+
+# recfile — directory mode (one .rec file per table)
+conn = recdb.connect("./data")
 
 # SQLite — use stdlib directly, no wrapper needed
 import sqlite3

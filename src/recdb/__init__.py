@@ -2,92 +2,81 @@
 recdb
 ~~~~~
 A recfile DB-API adapter that mirrors the sqlite3 interface.
-Backend is inferred from the file extension:
+The mode is inferred from the path passed to connect():
 
     import recdb
-    conn = recdb.connect("inventory.rec")   # recfile backend (GNU recutils)
 
-For multi-table directory mode:
+    # Single-file mode — path ends in .rec
+    conn = recdb.connect("inventory.rec")    # all tables in one file
+    conn = recdb.connect("data/library.rec")
 
-    conn = recdb.connect_dir("./data")      # each table → ./data/{table}.rec
+    # Directory mode — path has no .rec extension (or is an existing directory)
+    conn = recdb.connect("./data")           # each table → ./data/{table}.rec
+    conn = recdb.connect("mydb")             # each table → mydb/{table}.rec
 
-For SQLite, use the stdlib directly — it already works:
+For SQLite, use the stdlib directly:
 
     import sqlite3
     conn = sqlite3.connect("inventory.db")
-    conn.row_factory = sqlite3.Row          # makes rows dict-like
+    conn.row_factory = sqlite3.Row
 
 The recfile backend implements the same interface as sqlite3 so that
-application code works unchanged against either.
+application code works unchanged across all three.
 """
+
+from pathlib import Path
 
 from .base import BaseConnection, BaseCursor
 from .recfile import RecfileConnection
 import shutil
 
-__all__ = ["connect", "connect_dir", "RecfileConnection", "BaseConnection", "BaseCursor"]
-
-_REC_EXTENSIONS = {".rec"}
+__all__ = ["connect", "RecfileConnection", "BaseConnection", "BaseCursor"]
 
 
 def connect(path: str) -> "RecfileConnection":
     """
-    Open a single-file recfile database connection.
+    Open a recfile database connection.
 
-    The path should point to a ``.rec`` file.  The parent directory is
-    used as the database root and the file stem becomes the default table
-    name, so ``connect("data/inventory.rec")`` will query the ``inventory``
-    record type inside ``data/inventory.rec``.
+    The mode is inferred from the path:
 
-    For a directory of ``.rec`` files (one per table), use
-    :func:`connect_dir` instead.
+    - If the path ends in ``.rec`` → **single-file mode**.  All tables are
+      stored as ``%rec:`` blocks inside that one file.  The file stem is used
+      as the default table name when none is specified in SQL::
 
-    :param path: Path to a ``.rec`` file.
+          conn = recdb.connect("inventory.rec")
+          conn.execute("SELECT * FROM items")        # table from stem
+          conn.execute("SELECT * FROM suppliers")    # explicit table name
+
+    - Anything else → **directory mode**.  Each table maps to a separate
+      ``.rec`` file inside the directory, which is created if it does not
+      exist::
+
+          conn = recdb.connect("./data")
+          conn.execute("SELECT * FROM items")    # → ./data/items.rec
+          conn.execute("SELECT * FROM orders")   # → ./data/orders.rec
+
+    For SQLite use the stdlib directly: ``sqlite3.connect("inventory.db")``.
+
+    :param path: Path to a ``.rec`` file (single-file mode) or a directory
+                 (directory mode).
     :returns:    A :class:`RecfileConnection` instance.
-    :raises ValueError: If the path does not have a ``.rec`` extension.
     :raises RuntimeError: If GNU recutils is not installed.
     """
-    from pathlib import Path
+    if shutil.which("recsel") is None:
+        raise RuntimeError(
+            "GNU recutils is required but not found in PATH. "
+            "Install with: apt install recutils  or  brew install recutils"
+        )
+
     p = Path(path)
-    ext = p.suffix.lower()
 
-    if shutil.which("recsel") is None:
-        raise RuntimeError(
-            "GNU recutils is required but not found in PATH. "
-            "Install with: apt install recutils  or  brew install recutils"
+    if p.suffix.lower() == ".rec":
+        # Single-file mode
+        return RecfileConnection(
+            str(p.parent),
+            default_table=p.stem,
+            single_file=str(p),
         )
-
-    if ext not in _REC_EXTENSIONS:
-        raise ValueError(
-            f"recdb.connect() only opens .rec files (got {ext!r}). "
-            f"For SQLite use: sqlite3.connect({str(path)!r})\n"
-            f"For a directory of .rec files use: recdb.connect_dir(directory)"
-        )
-
-    return RecfileConnection(str(p.parent), default_table=p.stem)
-
-
-def connect_dir(directory: str) -> "RecfileConnection":
-    """
-    Open a directory-mode recfile database connection.
-
-    Each table maps to a separate ``.rec`` file in the directory::
-
-        conn = recdb.connect_dir("./data")
-        conn.execute("SELECT * FROM items")    # → ./data/items.rec
-        conn.execute("SELECT * FROM orders")   # → ./data/orders.rec
-
-    The directory is created if it does not exist.  Table names must be
-    supplied explicitly in every SQL statement — there is no default table.
-
-    :param directory: Path to the directory containing ``.rec`` files.
-    :returns:         A :class:`RecfileConnection` instance.
-    :raises RuntimeError: If GNU recutils is not installed.
-    """
-    if shutil.which("recsel") is None:
-        raise RuntimeError(
-            "GNU recutils is required but not found in PATH. "
-            "Install with: apt install recutils  or  brew install recutils"
-        )
-
-    return RecfileConnection(directory, default_table=None)
+    else:
+        # Directory mode
+        return RecfileConnection(path, default_table=None)

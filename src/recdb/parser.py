@@ -53,6 +53,7 @@ def parse(sql: str, parameters: tuple = ()) -> dict:
         return _parse_update(stmt)
     if kind == "DELETE":
         return _parse_delete(stmt)
+    assert False, f"Unhandled statement type: {kind!r}"  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------

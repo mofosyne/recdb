@@ -13,11 +13,11 @@ Usage
 -----
     python examples/library_demo.py                    # all three modes
     DBTYPE=recfile      python examples/library_demo.py
-    DBTYPE=recfile-dir  python examples/library_demo.py
+    DBTYPE=recfile-dir  python examples/library_demo.py   # directory mode
     DBTYPE=sqlite       python examples/library_demo.py
 
     # Write data to a real directory you can inspect afterwards:
-    db_path=/tmp/library python examples/library_demo.py
+    DBPATH=/tmp/library python examples/library_demo.py
 
 The application code inside run() is identical for all three — that's
 the point.  Each mode produces the same printed output.
@@ -234,7 +234,7 @@ def sqlite_conn(path: str):
 
 
 if __name__ == "__main__":
-    db_type = os.environ.get("DBTYPE", "both").lower()
+    db_type   = os.environ.get("DBTYPE", "both").lower()
     db_path = os.environ.get("DBPATH", None)
 
     def go(tmp: str):
@@ -246,7 +246,7 @@ if __name__ == "__main__":
 
         if db_type in ("recfile-dir", "both"):
             run(
-                recdb.connect_dir(os.path.join(tmp, "library_dir")),
+                recdb.connect(os.path.join(tmp, "library_dir")),
                 "RECFILE DIR  (library_dir/books.rec + library_dir/borrowers.rec)"
             )
 

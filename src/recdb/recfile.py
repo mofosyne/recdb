@@ -4,16 +4,10 @@ recdb.recfile
 Recfile backend.  Translates parsed SQL ASTs into recutils CLI calls
 (recsel, recins, recset, recdel).
 
-Two usage modes:
+Used via recdb.connect() — not instantiated directly:
 
-    # Single-file (mirrors sqlite3.connect style)
-    conn = recdb.connect("inventory.rec")
-    conn.execute("SELECT * FROM items")   # table name = file stem by default
-
-    # Directory (multiple tables)
-    conn = RecfileConnection("./data")
-    conn.execute("SELECT * FROM items")   # → ./data/items.rec
-    conn.execute("SELECT * FROM orders")  # → ./data/orders.rec
+    conn = recdb.connect("inventory.rec")  # single-file mode
+    conn = recdb.connect("./data")         # directory mode
 
 recutils 1.9 notes:
   - recsel -S <field>  sorts ASC only; DESC is done by reversing in Python
@@ -52,9 +46,11 @@ def _like_to_regex(val: str) -> str:
 
 class RecfileCursor(BaseCursor):
 
-    def __init__(self, directory: str, default_table: Optional[str] = None):
+    def __init__(self, directory: str, default_table: Optional[str] = None,
+                 single_file: Optional[str] = None):
         self._directory = Path(directory)
         self._default_table = default_table
+        self._single_file = Path(single_file) if single_file else None
         self._rows: list[dict] = []
         self._pos: int = 0
         self._rowcount: int = -1
@@ -131,9 +127,20 @@ class RecfileCursor(BaseCursor):
 
     # --- CREATE TABLE -------------------------------------------------------
 
+    def _table_exists(self, table: str, rec_file: Path) -> bool:
+        """Check whether a %rec: block for *table* already exists in rec_file."""
+        if not rec_file.exists():
+            return False
+        if self._single_file is not None:
+            # Single-file: the file exists but the block may not yet be in it
+            return f"%rec: {table}" in rec_file.read_text()
+        # Directory: one file per table — file existence is sufficient
+        return True
+
     def _create_table(self, ast: dict) -> None:
         rec_file = self._rec_path(ast["table"])
-        if ast["if_not_exists"] and rec_file.exists():
+
+        if ast["if_not_exists"] and self._table_exists(ast["table"], rec_file):
             return
 
         lines = [f"%rec: {ast['table']}"]
@@ -151,7 +158,13 @@ class RecfileCursor(BaseCursor):
             lines.append(f"%key: {pk_cols[0]}")
 
         # Trailing blank line required — recutils needs it before first record
-        rec_file.write_text("\n".join(lines) + "\n\n")
+        header = "\n".join(lines) + "\n\n"
+        if self._single_file is not None and rec_file.exists():
+            # Append new %rec: block to the existing single file
+            with open(rec_file, "a") as f:
+                f.write(header)
+        else:
+            rec_file.write_text(header)
 
     # --- SELECT -------------------------------------------------------------
 
@@ -263,6 +276,8 @@ class RecfileCursor(BaseCursor):
         return " && ".join(parts)
 
     def _rec_path(self, table: str) -> Path:
+        if self._single_file is not None:
+            return self._single_file
         return self._directory / f"{table}.rec"
 
     def _run(self, cmd: list[str]) -> str:
@@ -315,24 +330,22 @@ def _coerce(val: str) -> Any:
 
 class RecfileConnection(BaseConnection):
     """
-    Connection to a recfile database.
+    Connection to a recfile database.  Create via recdb.connect(), not directly.
 
-    Single-file mode (mirrors sqlite3.connect):
-        conn = recdb.connect("inventory.rec")
-        conn.execute("SELECT * FROM items")
-
-    Directory mode (multiple tables):
-        conn = RecfileConnection("./data")
-        conn.execute("SELECT * FROM items")   # → ./data/items.rec
+    Single-file mode:   recdb.connect("inventory.rec")
+    Directory mode:     recdb.connect("./data")
     """
 
-    def __init__(self, directory: str, default_table: Optional[str] = None):
+    def __init__(self, directory: str, default_table: Optional[str] = None,
+                 single_file: Optional[str] = None):
         self._directory = directory
         self._default_table = default_table
+        self._single_file = single_file
         os.makedirs(directory, exist_ok=True)
 
     def cursor(self) -> RecfileCursor:
-        return RecfileCursor(self._directory, self._default_table)
+        return RecfileCursor(self._directory, self._default_table,
+                             single_file=self._single_file)
 
     def close(self) -> None:
         pass
@@ -343,7 +356,3 @@ class RecfileConnection(BaseConnection):
     def rollback(self) -> None:
         pass
 
-    def executemany(self, sql: str, seq_of_parameters) -> RecfileCursor:
-        cur = self.cursor()
-        cur.executemany(sql, seq_of_parameters)
-        return cur

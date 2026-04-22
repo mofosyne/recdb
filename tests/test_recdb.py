@@ -212,6 +212,7 @@ def test_apostrophe_in_value(conn):
     assert row is not None
     assert row["name"] == "O'Brien's Widget"
 
+
 def test_unsupported_join_raises(conn):
     with pytest.raises(Exception):
         conn.execute("SELECT * FROM items JOIN other ON items.sku = other.sku")
@@ -258,10 +259,17 @@ def test_context_manager_closes(tmp_path):
     assert len(c2.execute("SELECT * FROM t").fetchall()) == 1
     c2.close()
 
-def test_connect_rejects_non_rec(tmp_path):
-    """recdb.connect() only accepts .rec files — SQLite users use sqlite3 directly."""
-    with pytest.raises(ValueError, match=r"\.rec"):
-        recdb.connect(str(tmp_path / "inventory.db"))
+def test_connect_autodetects_mode(tmp_path):
+    """connect() infers single-file vs directory from the path extension."""
+    # .rec extension → single-file mode
+    sf = recdb.connect(str(tmp_path / "inventory.rec"))
+    assert sf._single_file is not None
+    sf.close()
+
+    # no .rec extension → directory mode
+    dm = recdb.connect(str(tmp_path / "mydb"))
+    assert dm._single_file is None
+    dm.close()
 
 def test_connect_infers_table_from_stem(tmp_path):
     """The file stem becomes the default table name."""
@@ -271,7 +279,7 @@ def test_connect_infers_table_from_stem(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Directory mode — connect_dir()
+# Directory mode — connect() with a non-.rec path
 # ---------------------------------------------------------------------------
 
 CREATE_ITEMS = """
@@ -295,7 +303,7 @@ CREATE_SUPPLIERS = """
 @pytest.fixture
 def dir_conn(tmp_path):
     """Directory-mode connection — tables live in separate .rec files."""
-    c = recdb.connect_dir(str(tmp_path / "db"))
+    c = recdb.connect(str(tmp_path / "db"))
     c.execute(CREATE_ITEMS)
     c.executemany(INSERT, SEED)
     c.commit()
@@ -304,10 +312,10 @@ def dir_conn(tmp_path):
 
 
 def test_dir_connect_creates_directory(tmp_path):
-    """connect_dir() creates the directory if it does not exist."""
+    """connect() creates the directory if it does not exist (directory mode)."""
     d = tmp_path / "newdir"
     assert not d.exists()
-    conn = recdb.connect_dir(str(d))
+    conn = recdb.connect(str(d))
     assert d.exists()
     conn.close()
 
@@ -351,7 +359,7 @@ def test_dir_delete(dir_conn):
 def test_dir_multiple_tables(tmp_path):
     """Each table maps to a separate .rec file in the directory."""
     db_dir = str(tmp_path / "multidb")
-    conn = recdb.connect_dir(db_dir)
+    conn = recdb.connect(db_dir)
 
     conn.execute(CREATE_ITEMS)
     conn.execute(
@@ -383,9 +391,9 @@ def test_dir_multiple_tables(tmp_path):
 
 
 def test_dir_context_manager(tmp_path):
-    """connect_dir() works as a context manager."""
+    """connect() works as a context manager in directory mode."""
     db_dir = str(tmp_path / "ctx_db")
-    with recdb.connect_dir(db_dir) as conn:
+    with recdb.connect(db_dir) as conn:
         conn.execute(CREATE_ITEMS)
         conn.execute(
             "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
@@ -393,7 +401,7 @@ def test_dir_context_manager(tmp_path):
         )
 
     # Re-open and verify data persisted
-    conn2 = recdb.connect_dir(db_dir)
+    conn2 = recdb.connect(db_dir)
     rows = conn2.execute("SELECT * FROM items").fetchall()
     assert len(rows) == 1
     conn2.close()
@@ -406,10 +414,75 @@ def test_dir_order_by(dir_conn):
 
 
 def test_dir_no_default_table(tmp_path):
-    """connect_dir() has no default table — table name must be explicit in SQL."""
-    conn = recdb.connect_dir(str(tmp_path / "db"))
+    """directory mode has no default table — table name must be explicit in SQL."""
+    conn = recdb.connect(str(tmp_path / "db"))
     conn.execute(CREATE_ITEMS)
     # This should work fine — table name is in the SQL
     rows = conn.execute("SELECT * FROM items").fetchall()
     assert rows == []
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Single-file multi-table — connect() with multiple %rec: blocks
+# ---------------------------------------------------------------------------
+
+CREATE_SUPPLIERS = """
+    CREATE TABLE IF NOT EXISTS suppliers (
+        name    TEXT NOT NULL,
+        contact TEXT NOT NULL
+    )
+"""
+
+
+def test_single_file_multiple_tables(tmp_path):
+    """connect() stores all tables as %rec: blocks in one .rec file."""
+    rec_path = str(tmp_path / "db.rec")
+    conn = recdb.connect(rec_path)
+
+    conn.execute(CREATE_ITEMS)
+    conn.execute(CREATE_SUPPLIERS)
+    conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("Widget A", "WGT-001", 50, 9.99, "widgets")
+    )
+    conn.execute(
+        "INSERT INTO suppliers (name, contact) VALUES (?, ?)",
+        ("Acme Corp", "acme@example.com")
+    )
+    conn.commit()
+
+    items = conn.execute("SELECT * FROM items").fetchall()
+    suppliers = conn.execute("SELECT * FROM suppliers").fetchall()
+
+    assert len(items) == 1
+    assert items[0]["name"] == "Widget A"
+    assert len(suppliers) == 1
+    assert suppliers[0]["name"] == "Acme Corp"
+
+    # The critical assertion: everything lives in ONE file
+    from pathlib import Path
+    assert Path(rec_path).exists(), "single .rec file should exist"
+    assert not (tmp_path / "items.rec").exists(), "items.rec should NOT exist"
+    assert not (tmp_path / "suppliers.rec").exists(), "suppliers.rec should NOT exist"
+
+    content = Path(rec_path).read_text()
+    assert "%rec: items" in content
+    assert "%rec: suppliers" in content
+
+    conn.close()
+
+
+def test_single_file_if_not_exists_idempotent(tmp_path):
+    """CREATE TABLE IF NOT EXISTS is idempotent on a single-file connection."""
+    conn = recdb.connect(str(tmp_path / "db.rec"))
+    conn.execute(CREATE_ITEMS)
+    conn.execute(CREATE_ITEMS)  # second call should be a no-op, not raise
+    conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("Widget A", "WGT-001", 50, 9.99, "widgets")
+    )
+    conn.commit()
+    rows = conn.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 1
     conn.close()

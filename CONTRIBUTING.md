@@ -58,7 +58,7 @@ recdb/
 ├── tests/
 │   └── test_recdb.py
 ├── examples/
-│   └── inventory_demo.py
+│   └── library_demo.py
 ├── data/
 │   └── items.rec    ← sample data for manual exploration
 ├── pyproject.toml
