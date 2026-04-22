@@ -16,7 +16,8 @@ Supported grammar (rough BNF):
     expr        ::= col op val [AND col op val ...]   (no OR, no nesting)
     op          ::= = | != | < | > | <= | >= | LIKE
 
-Raises AssertionError for anything outside this subset.
+Raises SQLParseError for malformed SQL, UnsupportedSQLError for valid SQL
+that the recfile backend cannot handle.
 """
 
 import re
@@ -24,6 +25,8 @@ import sqlparse
 from sqlparse.sql import Where, Identifier, IdentifierList
 from sqlparse.tokens import Keyword, DML, Wildcard
 from typing import Any
+
+from .exceptions import SQLParseError, UnsupportedSQLError
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -38,12 +41,15 @@ def parse(sql: str, parameters: tuple = ()) -> dict:
         return _parse_create_table(sql)
 
     statements = sqlparse.parse(sql)
-    assert len(statements) == 1, "Only a single statement per execute() is supported"
+    if len(statements) != 1:
+        raise SQLParseError("Only a single statement per execute() is supported")
     stmt = statements[0]
 
     kind = stmt.get_type()
-    assert kind in ("SELECT", "INSERT", "UPDATE", "DELETE"), \
-        f"Unsupported statement type: {kind!r}. Supported: SELECT, INSERT, UPDATE, DELETE, CREATE TABLE"
+    if kind not in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+        raise UnsupportedSQLError(
+            f"Unsupported statement type: {kind!r}. Supported: SELECT, INSERT, UPDATE, DELETE, CREATE TABLE"
+        )
 
     if kind == "SELECT":
         return _parse_select(stmt, sql)
@@ -53,7 +59,7 @@ def parse(sql: str, parameters: tuple = ()) -> dict:
         return _parse_update(stmt)
     if kind == "DELETE":
         return _parse_delete(stmt)
-    assert False, f"Unhandled statement type: {kind!r}"  # pragma: no cover
+    raise SQLParseError(f"Unhandled statement type: {kind!r}")  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +68,10 @@ def parse(sql: str, parameters: tuple = ()) -> dict:
 
 def _substitute(sql: str, parameters: tuple) -> str:
     parts = sql.split("?")
-    assert len(parts) - 1 == len(parameters), \
-        f"Expected {len(parts)-1} parameters, got {len(parameters)}"
+    if len(parts) - 1 != len(parameters):
+        raise SQLParseError(
+            f"Expected {len(parts)-1} parameters, got {len(parameters)}"
+        )
     result = parts[0]
     for param, part in zip(parameters, parts[1:]):
         result += _quote(param) + part
@@ -97,7 +105,8 @@ def _parse_create_table(sql: str) -> dict:
         r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.+)\)",
         sql, re.IGNORECASE | re.DOTALL
     )
-    assert m, "Could not parse CREATE TABLE statement"
+    if not m:
+        raise SQLParseError("Could not parse CREATE TABLE statement")
     table = m.group(1)
     columns = _parse_column_defs(m.group(2))
     return {
@@ -152,8 +161,8 @@ def _split_balanced(s: str) -> list[str]:
 def _parse_select(stmt, raw_sql: str) -> dict:
     upper = raw_sql.upper()
     for clause in ("JOIN", "GROUP BY", "HAVING", "UNION"):
-        assert clause not in upper, \
-            f"Unsupported clause in recfile backend: {clause}"
+        if clause in upper:
+            raise UnsupportedSQLError(f"Unsupported clause in recfile backend: {clause}")
 
     # ORDER BY
     order_by, order_dir = None, "ASC"
@@ -180,7 +189,7 @@ def _parse_select(stmt, raw_sql: str) -> dict:
             if t.ttype is Keyword and t.normalized == "FROM"
         )
     except StopIteration:
-        assert False, "Could not find FROM in SELECT statement"
+        raise SQLParseError("Could not find FROM in SELECT statement")
 
     return {
         "type": "SELECT",
@@ -219,12 +228,15 @@ def _parse_insert(stmt) -> dict:
         r"INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)",
         sql, re.IGNORECASE
     )
-    assert m, "Could not parse INSERT. Expected: INSERT INTO table (cols) VALUES (vals)"
+    if not m:
+        raise SQLParseError("Could not parse INSERT. Expected: INSERT INTO table (cols) VALUES (vals)")
     table = m.group(1)
     columns = [c.strip().strip('"\'`') for c in m.group(2).split(",")]
     values = [_unquote(v) for v in _split_values(m.group(3))]
-    assert len(columns) == len(values), \
-        f"Column count ({len(columns)}) doesn't match value count ({len(values)})"
+    if len(columns) != len(values):
+        raise SQLParseError(
+            f"Column count ({len(columns)}) doesn't match value count ({len(values)})"
+        )
     return {"type": "INSERT", "table": table, "columns": columns, "values": values}
 
 
@@ -268,9 +280,11 @@ def _parse_update(stmt) -> dict:
     sql = stmt.value
     upper = sql.upper()
     for clause in ("JOIN", "FROM", "RETURNING"):
-        assert clause not in upper, f"Unsupported clause in recfile backend: {clause}"
+        if clause in upper:
+            raise UnsupportedSQLError(f"Unsupported clause in recfile backend: {clause}")
     m = re.match(r"UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE\s+(.+))?$", sql, re.IGNORECASE | re.DOTALL)
-    assert m, "Could not parse UPDATE statement"
+    if not m:
+        raise SQLParseError("Could not parse UPDATE statement")
     where_str = m.group(3)
     return {
         "type": "UPDATE",
@@ -284,7 +298,8 @@ def _parse_assignments(set_clause: str) -> list[tuple[str, Any]]:
     result = []
     for part in re.split(r",\s*(?=\w+\s*=)", set_clause):
         m = re.match(r"(\w+)\s*=\s*(.+)", part.strip())
-        assert m, f"Could not parse SET clause: {part!r}"
+        if not m:
+            raise SQLParseError(f"Could not parse SET clause: {part!r}")
         result.append((m.group(1), _unquote(m.group(2).strip())))
     return result
 
@@ -296,7 +311,8 @@ def _parse_assignments(set_clause: str) -> list[tuple[str, Any]]:
 def _parse_delete(stmt) -> dict:
     sql = stmt.value
     m = re.match(r"DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$", sql, re.IGNORECASE | re.DOTALL)
-    assert m, "Could not parse DELETE statement"
+    if not m:
+        raise SQLParseError("Could not parse DELETE statement")
     where_str = m.group(2)
     return {
         "type": "DELETE",
@@ -321,8 +337,8 @@ def _extract_where(stmt) -> list[dict]:
 
 def _parse_where_string(where_str: str) -> list[dict]:
     # Word-boundary check so "category" doesn't trigger the OR guard
-    assert not re.search(r"\bOR\b", where_str, re.IGNORECASE), \
-        "OR in WHERE clauses is not supported by the recfile backend"
+    if re.search(r"\bOR\b", where_str, re.IGNORECASE):
+        raise UnsupportedSQLError("OR in WHERE clauses is not supported by the recfile backend")
 
     conditions = []
     for part in re.split(r"\bAND\b", where_str, flags=re.IGNORECASE):
@@ -338,7 +354,8 @@ def _parse_where_string(where_str: str) -> list[dict]:
             continue
         # Comparison
         m = re.match(r"(\w+)\s*(!=|<=|>=|=|<|>)\s*(.+)", part)
-        assert m, f"Could not parse WHERE condition: {part!r}"
+        if not m:
+            raise SQLParseError(f"Could not parse WHERE condition: {part!r}")
         conditions.append({
             "col": m.group(1),
             "op": m.group(2),
@@ -357,7 +374,7 @@ def _extract_table_after_from(flat, from_idx) -> str:
             val = t.value.strip().strip("`\"'")
             if val and val.upper() not in ("WHERE", "SET"):
                 return val
-    assert False, "Could not find table name after FROM"
+    raise SQLParseError("Could not find table name after FROM")
 
 
 def _unquote(s: str) -> Any:

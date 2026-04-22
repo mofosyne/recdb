@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .base import BaseConnection, BaseCursor
+from .exceptions import RecutilsError, RecutilsNotFoundError
 from .parser import parse
 
 
@@ -282,8 +283,10 @@ class RecfileCursor(BaseCursor):
 
     def _run(self, cmd: list[str]) -> str:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        assert result.returncode == 0, \
-            f"recutils command failed: {' '.join(cmd)}\n{result.stderr}"
+        if result.returncode != 0:
+            raise RecutilsError(
+                f"recutils command failed: {' '.join(cmd)}\n{result.stderr.strip()}"
+            )
         return result.stdout
 
 
