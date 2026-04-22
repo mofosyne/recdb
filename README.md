@@ -75,7 +75,7 @@ with recdb.connect("inventory.rec") as conn:
 
 `=  !=  <  >  <=  >=  LIKE  AND`
 
-`OR`, `IN`, subqueries, `JOIN`, `GROUP BY`, `UNION`, and `HAVING` are not currently supported in the recfile backend (raises `AssertionError`).
+`OR`, `IN`, subqueries, `JOIN`, `GROUP BY`, `UNION`, and `HAVING` are not currently supported in the recfile backend (raises `UnsupportedSQLError` exception).
 
 ## File layout
 

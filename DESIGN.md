@@ -71,7 +71,7 @@ DELETE FROM table [WHERE expr]
 CREATE TABLE [IF NOT EXISTS] table (col type ...)
 ```
 
-Anything outside this subset raises `AssertionError` with a descriptive message. 
+Anything outside this subset raises `UnsupportedSQLError` with a descriptive message. 
 This is intentionally aggressive: unsupported SQL should fail immediately rather
 than degrade into partial or incorrect results.
 
@@ -137,10 +137,7 @@ The tradeoffs between modes:
 
 ### `assert` instead of a custom exception hierarchy
 
-Unsupported SQL raises `AssertionError` with a descriptive message. A
-custom `UnsupportedSQLError` would be cleaner for library consumers who
-want to catch it specifically, but adds an API surface to maintain. This
-is worth revisiting before a 1.0 release.
+Unsupported SQL raises `UnsupportedSQLError` with a descriptive message.
 
 ### `sqlparse` as the only runtime dependency
 
@@ -190,11 +187,6 @@ These are known limitations worth addressing as the project matures.
 They're left for future contributors rather than pre-optimised.
 
 ### Near-term
-
-**Custom exception type**
-Replace `AssertionError` with a `RecDBError` (or `UnsupportedError`)
-so callers can catch recdb-specific errors without catching all
-`AssertionError`s in their program.
 
 **`OR` in WHERE clauses**
 The recfile backend currently asserts on `OR`. recutils' expression
