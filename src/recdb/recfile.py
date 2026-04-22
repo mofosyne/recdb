@@ -18,6 +18,7 @@ recutils 1.9 notes:
 import os
 import re
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,6 +41,119 @@ def _like_to_regex(val: str) -> str:
             result += ch
     return result
 
+
+def _recutils_available() -> bool:
+    """Return True if recsel is available on PATH."""
+    return shutil.which("recsel") is not None
+
+
+def _parse_recfile_python(filepath: Path, table: str | None = None) -> list[dict]:
+    """
+    Pure-Python read-only .rec file parser.  Used as a fallback when
+    GNU recutils is not installed.
+
+    Handles:
+      - %rec: tablename   — record-type descriptor blocks
+      - %type: / %mandatory: / %key: etc  — descriptor lines (skipped)
+      - Key: Value        — field lines
+      - +continuation     — multi-line field values
+      - #comments         — ignored
+      - blank lines       — record separators
+    """
+    records: list[dict] = []
+    current: dict = {}
+    last_key: str | None = None
+    in_target = table is None  # if no table filter, accept everything
+
+    with open(filepath, "r", encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+
+            # %rec: block header — switch target tracking
+            if line.startswith("%rec:"):
+                # Flush any in-progress record on table boundary
+                if current:
+                    records.append(current)
+                    current = {}
+                    last_key = None
+                table_name = line[5:].strip()
+                in_target = (table is None or table_name == table)
+                continue
+
+            if not in_target:
+                continue
+
+            # Skip descriptor lines and comments
+            if line.startswith("%") or line.startswith("#"):
+                continue
+
+            # Continuation line: appends to the last field value
+            if line.startswith("+"):
+                if last_key and last_key in current:
+                    current[last_key] = current[last_key] + "\n" + line[1:].strip()
+                continue
+
+            # Blank line: record separator
+            if not line.strip():
+                if current:
+                    records.append(current)
+                    current = {}
+                    last_key = None
+                continue
+
+            # Field line: "Key: Value"
+            if ":" in line:
+                key, _, value = line.partition(":")
+                key = key.strip()
+                current[key] = _coerce(value.strip())
+                last_key = key
+
+    # Flush the final record (file may not end with a blank line)
+    if current:
+        records.append(current)
+
+    return records
+
+
+def _python_filter(records: list[dict], conditions: list[dict]) -> list[dict]:
+    """Apply WHERE conditions to records using pure Python."""
+    import fnmatch
+    result = []
+    for row in records:
+        match = True
+        for cond in conditions:
+            col, op, val = cond["col"], cond["op"], cond["value"]
+            row_val = row.get(col)
+            if row_val is None:
+                match = False
+                break
+            # Coerce for numeric comparisons
+            try:
+                rv, cv = float(str(row_val)), float(str(val))
+            except (ValueError, TypeError):
+                rv, cv = str(row_val), str(val)
+            if op == "=" and rv != cv:
+                match = False
+            elif op == "!=" and rv == cv:
+                match = False
+            elif op == "<" and not rv < cv:
+                match = False
+            elif op == ">" and not rv > cv:
+                match = False
+            elif op == "<=" and not rv <= cv:
+                match = False
+            elif op == ">=" and not rv >= cv:
+                match = False
+            elif op == "LIKE":
+                # Translate SQL LIKE to fnmatch: % → *, _ → ?
+                pattern = str(val).replace("%", "*").replace("_", "?")
+                if not fnmatch.fnmatch(str(row_val), pattern):
+                    match = False
+            if not match:
+                break
+        if match:
+            result.append(row)
+    return result
 
 # ---------------------------------------------------------------------------
 # Cursor
@@ -139,6 +253,12 @@ class RecfileCursor(BaseCursor):
         return True
 
     def _create_table(self, ast: dict) -> None:
+        if not _recutils_available():
+            raise RecutilsNotFoundError(
+                "GNU recutils is required for CREATE TABLE operations. "
+                "Install with: apt install recutils  or  brew install recutils"
+            )
+
         rec_file = self._rec_path(ast["table"])
 
         if ast["if_not_exists"] and self._table_exists(ast["table"], rec_file):
@@ -174,6 +294,9 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return []
 
+        if not _recutils_available():
+            return self._select_python(ast, rec_file)
+
         cmd = ["recsel", "-t", ast["table"]]
 
         if ast["columns"] != ["*"]:
@@ -201,9 +324,34 @@ class RecfileCursor(BaseCursor):
 
         return rows
 
+    def _select_python(self, ast: dict, rec_file: Path) -> list[dict]:
+        """Pure-Python SELECT fallback used when recutils is not installed."""
+        rows = _parse_recfile_python(rec_file, ast["table"])
+
+        if ast["where"]:
+            rows = _python_filter(rows, ast["where"])
+
+        if ast.get("order_by"):
+            reverse = ast.get("order_dir") == "DESC"
+            rows = sorted(rows, key=lambda r: r.get(ast["order_by"], ""), reverse=reverse)
+
+        if ast.get("limit") is not None:
+            rows = rows[:ast["limit"]]
+
+        if ast["columns"] != ["*"]:
+            rows = [{col: r.get(col) for col in ast["columns"]} for r in rows]
+
+        return rows
+
     # --- INSERT -------------------------------------------------------------
 
     def _insert(self, ast: dict) -> int:
+        if not _recutils_available():
+            raise RecutilsNotFoundError(
+                "GNU recutils is required for INSERT operations. "
+                "Install with: apt install recutils  or  brew install recutils"
+            )
+
         rec_file = self._rec_path(ast["table"])
         if not rec_file.exists():
             rec_file.touch()
@@ -218,6 +366,12 @@ class RecfileCursor(BaseCursor):
     # --- UPDATE -------------------------------------------------------------
 
     def _update(self, ast: dict) -> int:
+        if not _recutils_available():
+            raise RecutilsNotFoundError(
+                "GNU recutils is required for UPDATE operations. "
+                "Install with: apt install recutils  or  brew install recutils"
+            )
+
         rec_file = self._rec_path(ast["table"])
         if not rec_file.exists():
             return 0
@@ -239,6 +393,12 @@ class RecfileCursor(BaseCursor):
     # --- DELETE -------------------------------------------------------------
 
     def _delete(self, ast: dict) -> int:
+        if not _recutils_available():
+            raise RecutilsNotFoundError(
+                "GNU recutils is required for DELETE operations. "
+                "Install with: apt install recutils  or  brew install recutils"
+            )
+
         rec_file = self._rec_path(ast["table"])
         if not rec_file.exists():
             return 0

@@ -28,7 +28,6 @@ from pathlib import Path
 
 from .base import BaseConnection, BaseCursor
 from .recfile import RecfileConnection
-import shutil
 
 __all__ = ["connect", "RecfileConnection", "BaseConnection", "BaseCursor"]
 
@@ -62,11 +61,6 @@ def connect(path: str) -> "RecfileConnection":
     :returns:    A :class:`RecfileConnection` instance.
     :raises RuntimeError: If GNU recutils is not installed.
     """
-    if shutil.which("recsel") is None:
-        raise RuntimeError(
-            "GNU recutils is required but not found in PATH. "
-            "Install with: apt install recutils  or  brew install recutils"
-        )
 
     p = Path(path)
 
