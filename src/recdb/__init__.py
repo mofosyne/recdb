@@ -24,13 +24,31 @@ The recfile backend implements the same interface as sqlite3 so that
 application code works unchanged across all three.
 """
 
+import shutil
 from pathlib import Path
 
 from .base import BaseConnection, BaseCursor
+from .exceptions import (
+    RecDBError,
+    SQLParseError,
+    UnsupportedSQLError,
+    RecutilsError,
+    RecutilsNotFoundError,
+)
 from .recfile import RecfileConnection
-import shutil
+from . import pyrecutils_backend as _pyrec
 
-__all__ = ["connect", "RecfileConnection", "BaseConnection", "BaseCursor"]
+__all__ = [
+    "connect",
+    "RecfileConnection",
+    "BaseConnection",
+    "BaseCursor",
+    "RecDBError",
+    "SQLParseError",
+    "UnsupportedSQLError",
+    "RecutilsError",
+    "RecutilsNotFoundError",
+]
 
 
 def connect(path: str) -> "RecfileConnection":
@@ -60,12 +78,13 @@ def connect(path: str) -> "RecfileConnection":
     :param path: Path to a ``.rec`` file (single-file mode) or a directory
                  (directory mode).
     :returns:    A :class:`RecfileConnection` instance.
-    :raises RuntimeError: If GNU recutils is not installed.
+    :raises RecutilsNotFoundError: If neither GNU recutils nor python-recutils
+                                   is available.
     """
-    if shutil.which("recsel") is None:
-        raise RuntimeError(
-            "GNU recutils is required but not found in PATH. "
-            "Install with: apt install recutils  or  brew install recutils"
+    if shutil.which("recsel") is None and not _pyrec.available():
+        raise RecutilsNotFoundError(
+            "Neither GNU recutils nor the python-recutils package was found. "
+            "Install one with: apt install recutils  or  pip install python-recutils"
         )
 
     p = Path(path)
