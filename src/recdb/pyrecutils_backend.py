@@ -20,11 +20,10 @@ Limitations vs. the GNU recutils backend:
 
 from __future__ import annotations
 
-import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from .exceptions import SQLParseError
+from ._expr import build_expr as _build_expr, like_to_regex as _like_to_regex
 
 try:
     from recutils.parser import parse as _ru_parse, Field as _RuField
@@ -34,10 +33,6 @@ try:
     _AVAILABLE = True
 except ImportError:
     _AVAILABLE = False
-
-if TYPE_CHECKING:
-    pass
-
 
 def available() -> bool:
     """Return True if python-recutils is importable."""
@@ -202,38 +197,3 @@ def create_table(rec_file: Path, table: str, ast: dict) -> None:
         rec_file.write_text(header, encoding="utf-8")
 
 
-# ---------------------------------------------------------------------------
-# Expression builder — identical logic to RecfileCursor._build_expr
-# ---------------------------------------------------------------------------
-
-def _build_expr(conditions: list[dict]) -> str:
-    """Translate WHERE AST conditions into a recsel/python-recutils expression."""
-    if not conditions:
-        return ""
-    parts = []
-    for c in conditions:
-        col, op, val = c["col"], c["op"], c["value"]
-        if op == "LIKE":
-            parts.append(f"{col} ~ '{_like_to_regex(str(val))}'")
-        elif op == "=":
-            parts.append(f"{col} = '{val}'")
-        elif op == "!=":
-            parts.append(f"{col} != '{val}'")
-        elif op in ("<", ">", "<=", ">="):
-            parts.append(f"{col} {op} {val}")
-    return " && ".join(parts)
-
-
-def _like_to_regex(val: str) -> str:
-    """Translate SQL LIKE pattern to a recsel regex. % → .* and _ → ."""
-    result = ""
-    for ch in val:
-        if ch == "%":
-            result += ".*"
-        elif ch == "_":
-            result += "."
-        elif ch in r"\.+?{}[]|()^$":
-            result += "\\" + ch
-        else:
-            result += ch
-    return result

@@ -25,33 +25,12 @@ from typing import Any, Optional
 from .base import BaseConnection, BaseCursor
 from .exceptions import RecutilsError, RecutilsNotFoundError
 from . import pyrecutils_backend as _pyrec
+from ._expr import build_expr as _build_expr_fn, like_to_regex as _like_to_regex
 from .parser import parse
 
 
-def _like_to_regex(val: str) -> str:
-    """Translate SQL LIKE pattern to a recsel regex. % → .* and _ → ."""
-    result = ""
-    for ch in val:
-        if ch == "%":
-            result += ".*"
-        elif ch == "_":
-            result += "."
-        elif ch in r"\.+?{}[]|()^$":
-            result += "\\" + ch
-        else:
-            result += ch
-    return result
 
 
-
-def _recutils_available() -> bool:
-    """Return True if GNU recutils (recsel) is available on PATH."""
-    return shutil.which("recsel") is not None
-
-
-def _pyrecutils_available() -> bool:
-    """Return True if the python-recutils package is importable."""
-    return _pyrec.available()
 
 
 
@@ -158,8 +137,8 @@ class RecfileCursor(BaseCursor):
         if ast["if_not_exists"] and self._table_exists(ast["table"], rec_file):
             return
 
-        if not _recutils_available():
-            if _pyrecutils_available():
+        if not shutil.which("recsel") is not None:
+            if _pyrec.available():
                 _pyrec.create_table(rec_file, ast["table"], ast)
                 return
             raise RecutilsNotFoundError(
@@ -196,9 +175,9 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return []
 
-        if _recutils_available():
+        if shutil.which("recsel") is not None:
             return self._select_recutils(ast, rec_file)
-        if _pyrecutils_available():
+        if _pyrec.available():
             return self._select_pyrecutils(ast, rec_file)
         raise RecutilsNotFoundError(
             "GNU recutils or the python-recutils package is required for SELECT. "
@@ -243,7 +222,7 @@ class RecfileCursor(BaseCursor):
     def _insert(self, ast: dict) -> int:
         rec_file = self._rec_path(ast["table"])
 
-        if _recutils_available():
+        if shutil.which("recsel") is not None:
             if not rec_file.exists():
                 rec_file.touch()
             cmd = ["recins", "-t", ast["table"]]
@@ -253,7 +232,7 @@ class RecfileCursor(BaseCursor):
             self._run(cmd)
             return 1
 
-        if _pyrecutils_available():
+        if _pyrec.available():
             return _pyrec.insert(rec_file, ast["table"], ast)
 
         raise RecutilsNotFoundError(
@@ -270,7 +249,7 @@ class RecfileCursor(BaseCursor):
 
         expr = self._build_expr(ast["where"])
 
-        if _recutils_available():
+        if shutil.which("recsel") is not None:
             for col, val in ast["assignments"]:
                 cmd = ["recset", "-t", ast["table"]]
                 if expr:
@@ -283,7 +262,7 @@ class RecfileCursor(BaseCursor):
                 "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
             }))
 
-        if _pyrecutils_available():
+        if _pyrec.available():
             return _pyrec.update(rec_file, ast["table"], ast)
 
         raise RecutilsNotFoundError(
@@ -300,7 +279,7 @@ class RecfileCursor(BaseCursor):
 
         expr = self._build_expr(ast["where"])
 
-        if _recutils_available():
+        if shutil.which("recsel") is not None:
             before = self._select({
                 "table": ast["table"], "columns": ["*"],
                 "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
@@ -314,7 +293,7 @@ class RecfileCursor(BaseCursor):
             self._run(cmd)
             return len(before)
 
-        if _pyrecutils_available():
+        if _pyrec.available():
             return _pyrec.delete(rec_file, ast["table"], ast)
 
         raise RecutilsNotFoundError(
@@ -325,20 +304,7 @@ class RecfileCursor(BaseCursor):
     # --- helpers ------------------------------------------------------------
 
     def _build_expr(self, conditions: list[dict]) -> str:
-        if not conditions:
-            return ""
-        parts = []
-        for c in conditions:
-            col, op, val = c["col"], c["op"], c["value"]
-            if op == "LIKE":
-                parts.append(f"{col} ~ '{_like_to_regex(str(val))}'")
-            elif op == "=":
-                parts.append(f"{col} = '{val}'")
-            elif op == "!=":
-                parts.append(f"{col} != '{val}'")
-            elif op in ("<", ">", "<=", ">="):
-                parts.append(f"{col} {op} {val}")
-        return " && ".join(parts)
+        return _build_expr_fn(conditions)
 
     def _rec_path(self, table: str) -> Path:
         if self._single_file is not None:
