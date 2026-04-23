@@ -17,12 +17,14 @@ recutils 1.9 notes:
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
 from .base import BaseConnection, BaseCursor
 from .exceptions import RecutilsError, RecutilsNotFoundError
+from . import pyrecutils_backend as _pyrec
 from .parser import parse
 
 
@@ -39,6 +41,18 @@ def _like_to_regex(val: str) -> str:
         else:
             result += ch
     return result
+
+
+
+def _recutils_available() -> bool:
+    """Return True if GNU recutils (recsel) is available on PATH."""
+    return shutil.which("recsel") is not None
+
+
+def _pyrecutils_available() -> bool:
+    """Return True if the python-recutils package is importable."""
+    return _pyrec.available()
+
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +158,16 @@ class RecfileCursor(BaseCursor):
         if ast["if_not_exists"] and self._table_exists(ast["table"], rec_file):
             return
 
+        if not _recutils_available():
+            if _pyrecutils_available():
+                _pyrec.create_table(rec_file, ast["table"], ast)
+                return
+            raise RecutilsNotFoundError(
+                "GNU recutils or the python-recutils package is required for CREATE TABLE. "
+                "Install with: apt install recutils  or  pip install python-recutils"
+            )
+
+        # GNU recutils available — write the header directly
         lines = [f"%rec: {ast['table']}"]
 
         mandatory = [c["name"] for c in ast["columns"] if c["not_null"] or c["primary_key"]]
@@ -158,10 +182,8 @@ class RecfileCursor(BaseCursor):
         if pk_cols:
             lines.append(f"%key: {pk_cols[0]}")
 
-        # Trailing blank line required — recutils needs it before first record
         header = "\n".join(lines) + "\n\n"
         if self._single_file is not None and rec_file.exists():
-            # Append new %rec: block to the existing single file
             with open(rec_file, "a") as f:
                 f.write(header)
         else:
@@ -174,6 +196,17 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return []
 
+        if _recutils_available():
+            return self._select_recutils(ast, rec_file)
+        if _pyrecutils_available():
+            return self._select_pyrecutils(ast, rec_file)
+        raise RecutilsNotFoundError(
+            "GNU recutils or the python-recutils package is required for SELECT. "
+            "Install with: apt install recutils  or  pip install python-recutils"
+        )
+
+    def _select_recutils(self, ast: dict, rec_file: Path) -> list[dict]:
+        """SELECT via GNU recutils subprocess."""
         cmd = ["recsel", "-t", ast["table"]]
 
         if ast["columns"] != ["*"]:
@@ -201,19 +234,32 @@ class RecfileCursor(BaseCursor):
 
         return rows
 
+    def _select_pyrecutils(self, ast: dict, rec_file: Path) -> list[dict]:
+        """SELECT via python-recutils (fallback when GNU recutils absent)."""
+        return _pyrec.select(rec_file, ast["table"], ast)
+
     # --- INSERT -------------------------------------------------------------
 
     def _insert(self, ast: dict) -> int:
         rec_file = self._rec_path(ast["table"])
-        if not rec_file.exists():
-            rec_file.touch()
 
-        cmd = ["recins", "-t", ast["table"]]
-        for col, val in zip(ast["columns"], ast["values"]):
-            cmd += ["-f", col, "-v", str(val) if val is not None else ""]
-        cmd.append(str(rec_file))
-        self._run(cmd)
-        return 1
+        if _recutils_available():
+            if not rec_file.exists():
+                rec_file.touch()
+            cmd = ["recins", "-t", ast["table"]]
+            for col, val in zip(ast["columns"], ast["values"]):
+                cmd += ["-f", col, "-v", str(val) if val is not None else ""]
+            cmd.append(str(rec_file))
+            self._run(cmd)
+            return 1
+
+        if _pyrecutils_available():
+            return _pyrec.insert(rec_file, ast["table"], ast)
+
+        raise RecutilsNotFoundError(
+            "GNU recutils or the python-recutils package is required for INSERT. "
+            "Install with: apt install recutils  or  pip install python-recutils"
+        )
 
     # --- UPDATE -------------------------------------------------------------
 
@@ -223,18 +269,27 @@ class RecfileCursor(BaseCursor):
             return 0
 
         expr = self._build_expr(ast["where"])
-        for col, val in ast["assignments"]:
-            cmd = ["recset", "-t", ast["table"]]
-            if expr:
-                cmd += ["-e", expr]
-            cmd += ["-f", col, "-s", str(val) if val is not None else ""]
-            cmd.append(str(rec_file))
-            self._run(cmd)
 
-        return len(self._select({
-            "table": ast["table"], "columns": ["*"],
-            "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
-        }))
+        if _recutils_available():
+            for col, val in ast["assignments"]:
+                cmd = ["recset", "-t", ast["table"]]
+                if expr:
+                    cmd += ["-e", expr]
+                cmd += ["-f", col, "-s", str(val) if val is not None else ""]
+                cmd.append(str(rec_file))
+                self._run(cmd)
+            return len(self._select({
+                "table": ast["table"], "columns": ["*"],
+                "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
+            }))
+
+        if _pyrecutils_available():
+            return _pyrec.update(rec_file, ast["table"], ast)
+
+        raise RecutilsNotFoundError(
+            "GNU recutils or the python-recutils package is required for UPDATE. "
+            "Install with: apt install recutils  or  pip install python-recutils"
+        )
 
     # --- DELETE -------------------------------------------------------------
 
@@ -243,20 +298,29 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return 0
 
-        before = self._select({
-            "table": ast["table"], "columns": ["*"],
-            "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
-        })
-
-        cmd = ["recdel", "-t", ast["table"]]
         expr = self._build_expr(ast["where"])
-        if expr:
-            cmd += ["-e", expr]
-        else:
-            cmd.append("--force")
-        cmd.append(str(rec_file))
-        self._run(cmd)
-        return len(before)
+
+        if _recutils_available():
+            before = self._select({
+                "table": ast["table"], "columns": ["*"],
+                "where": ast["where"], "order_by": None, "order_dir": "ASC", "limit": None,
+            })
+            cmd = ["recdel", "-t", ast["table"]]
+            if expr:
+                cmd += ["-e", expr]
+            else:
+                cmd.append("--force")
+            cmd.append(str(rec_file))
+            self._run(cmd)
+            return len(before)
+
+        if _pyrecutils_available():
+            return _pyrec.delete(rec_file, ast["table"], ast)
+
+        raise RecutilsNotFoundError(
+            "GNU recutils or the python-recutils package is required for DELETE. "
+            "Install with: apt install recutils  or  pip install python-recutils"
+        )
 
     # --- helpers ------------------------------------------------------------
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recdb"
-version = "0.1.01"
+version = "0.2.0"
 description = "A sqlite3-compatible DB-API adapter for GNU recfiles"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,8 +28,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+recutils = [
+    "python-recutils>=0.1",
+]
 dev = [
     "pytest>=7",
+    "python-recutils>=0.1",
 ]
 
 [project.urls]

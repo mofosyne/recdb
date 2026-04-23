@@ -486,3 +486,105 @@ def test_single_file_if_not_exists_idempotent(tmp_path):
     rows = conn.execute("SELECT * FROM items").fetchall()
     assert len(rows) == 1
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# python-recutils fallback backend
+# (run with recsel hidden from PATH to force the fallback)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def no_recutils(monkeypatch):
+    """Hide GNU recutils from PATH so the python-recutils fallback is used."""
+    monkeypatch.setenv("PATH", "")
+
+
+@pytest.fixture
+def pyrecutils_conn(tmp_path, no_recutils):
+    """Recfile connection exercising the python-recutils backend."""
+    import recdb
+    c = recdb.connect(str(tmp_path / "items.rec"))
+    c.execute(CREATE)
+    c.executemany(INSERT, SEED)
+    c.commit()
+    yield c
+    c.close()
+
+
+def test_pyrecutils_select_all(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 5
+
+
+def test_pyrecutils_select_where_eq(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Widget A"
+
+
+def test_pyrecutils_select_where_lt(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items WHERE stock < 10").fetchall()
+    assert len(rows) == 2
+
+
+def test_pyrecutils_select_like(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items WHERE name LIKE 'Widget%'").fetchall()
+    assert len(rows) == 2
+
+
+def test_pyrecutils_select_order_desc(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items ORDER BY stock DESC").fetchall()
+    stocks = [r["stock"] for r in rows]
+    assert stocks == sorted(stocks, reverse=True)
+
+
+def test_pyrecutils_select_limit(pyrecutils_conn):
+    rows = pyrecutils_conn.execute("SELECT * FROM items LIMIT 2").fetchall()
+    assert len(rows) == 2
+
+
+def test_pyrecutils_insert(pyrecutils_conn):
+    pyrecutils_conn.execute(
+        "INSERT INTO items (name, sku, stock, price, category) VALUES (?, ?, ?, ?, ?)",
+        ("New Thing", "NEW-001", 5, 1.99, "misc")
+    )
+    row = pyrecutils_conn.execute("SELECT * FROM items WHERE sku = 'NEW-001'").fetchone()
+    assert row is not None
+    assert row["name"] == "New Thing"
+
+
+def test_pyrecutils_update(pyrecutils_conn):
+    pyrecutils_conn.execute("UPDATE items SET stock = 999 WHERE sku = 'WGT-001'")
+    row = pyrecutils_conn.execute("SELECT * FROM items WHERE sku = 'WGT-001'").fetchone()
+    assert row["stock"] == 999
+
+
+def test_pyrecutils_delete_where(pyrecutils_conn):
+    pyrecutils_conn.execute("DELETE FROM items WHERE stock = 0")
+    rows = pyrecutils_conn.execute("SELECT * FROM items WHERE stock = 0").fetchall()
+    assert len(rows) == 0
+
+
+def test_pyrecutils_delete_all(pyrecutils_conn):
+    pyrecutils_conn.execute("DELETE FROM items")
+    rows = pyrecutils_conn.execute("SELECT * FROM items").fetchall()
+    assert len(rows) == 0
+
+
+def test_pyrecutils_multiple_tables(tmp_path, no_recutils):
+    """python-recutils backend handles multiple tables in a single .rec file."""
+    import recdb
+    conn = recdb.connect(str(tmp_path / "db.rec"))
+    conn.execute("CREATE TABLE IF NOT EXISTS items (name TEXT NOT NULL, stock INTEGER NOT NULL)")
+    conn.execute("CREATE TABLE IF NOT EXISTS suppliers (name TEXT NOT NULL)")
+    conn.execute("INSERT INTO items (name, stock) VALUES (?, ?)", ("Widget", 10))
+    conn.execute("INSERT INTO suppliers (name) VALUES (?)", ("Acme",))
+    conn.commit()
+
+    items = conn.execute("SELECT * FROM items").fetchall()
+    suppliers = conn.execute("SELECT * FROM suppliers").fetchall()
+    assert len(items) == 1
+    assert len(suppliers) == 1
+    assert items[0]["name"] == "Widget"
+    assert suppliers[0]["name"] == "Acme"
+    conn.close()
