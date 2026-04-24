@@ -14,8 +14,16 @@ Recfiles are plain text — human-readable, diffable with `git diff`, editable w
 
 ```bash
 pip install recdb
-apt install recutils        # or: brew install recutils
 ```
+
+recdb needs at least one of the following backends to operate:
+
+| Backend         | Install                                           | Capability              |
+|-----------------|---------------------------------------------------|-------------------------|
+| GNU recutils    | `apt install recutils` or `brew install recutils` | Read + write            |
+| python-recutils | `pip install recdb[recutils]`                     | Read + write (fallback) |
+
+GNU recutils is recommended — it is faster and more battle-tested. The `python-recutils` fallback is useful on platforms where installing recutils is inconvenient (e.g. Windows, CI environments). If both are installed, GNU recutils takes precedence.
 
 ## Quickstart
 
@@ -75,7 +83,23 @@ with recdb.connect("inventory.rec") as conn:
 
 `=  !=  <  >  <=  >=  LIKE  AND`
 
-`OR`, `IN`, subqueries, `JOIN`, `GROUP BY`, `UNION`, and `HAVING` are not currently supported in the recfile backend (raises `UnsupportedSQLError` exception).
+`OR`, `IN`, subqueries, `JOIN`, `GROUP BY`, `UNION`, and `HAVING` are not supported in the recfile backend and will raise `UnsupportedSQLError`. If you need any of these, it is a good signal to switch to SQLite — the migration is a one-line change.
+
+### Joins
+
+recdb does not support JOIN. Recfiles are designed for independent, self-contained record sets — the recutils tooling has no join primitive. If your data is naturally relational (foreign keys, many-to-many), you will be better served by SQLite from the start.
+
+For occasional cross-table lookups, the application-side join pattern works fine:
+
+```python
+# Find all books currently checked out, then look up each borrower
+checked_out = conn.execute("SELECT * FROM books WHERE checked_out_by != ''").fetchall()
+for book in checked_out:
+    borrower = conn.execute(
+        "SELECT * FROM borrowers WHERE member_id = ?", (book["checked_out_by"],)
+    ).fetchone()
+    print(f"{book['title']} → {borrower['name']}")
+```
 
 ## File layout
 
@@ -148,11 +172,54 @@ print(row["stock"])   # works
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for a full table of deviations from stdlib `sqlite3`.
 
+## Exceptions
+
+All recdb errors inherit from `recdb.RecDBError`:
+
+```python
+import recdb
+
+try:
+    conn.execute("SELECT * FROM items JOIN orders ON ...")
+except recdb.UnsupportedSQLError:
+    # JOIN not supported — switch to SQLite or use application-side join
+    ...
+except recdb.RecutilsNotFoundError:
+    # Neither GNU recutils nor python-recutils is installed
+    ...
+except recdb.RecDBError:
+    # Catch-all for any recdb error
+    ...
+```
+
+| Exception               | Raised when                                                          |
+|-------------------------|----------------------------------------------------------------------|
+| `RecDBError`            | Base class for all recdb errors                                      |
+| `SQLParseError`         | SQL cannot be parsed (syntax error, column/value count mismatch)     |
+| `UnsupportedSQLError`   | Valid SQL that the recfile backend does not support (JOIN, OR, etc.) |
+| `RecutilsError`         | A recutils subprocess exited with a non-zero return code             |
+| `RecutilsNotFoundError` | Neither GNU recutils nor python-recutils is available                |
+
+## When to switch to SQLite
+
+recdb is a good fit when your data is:
+- Small enough to read comfortably in a text editor
+- Stored in git alongside the code that uses it
+- Rarely queried relationally (no JOINs, or simple application-side lookups)
+
+Switch to SQLite when you need:
+- JOINs or complex relational queries
+- Concurrent writers
+- High write throughput
+- Referential integrity enforcement
+
+The switch is a one-line code change. That is intentional.
+
 ## Requirements
 
 - Python 3.9+
-- `sqlparse` (installed automatically via pip)
-- GNU `recutils` (`recsel`, `recins`, `recset`, `recdel`) installed separately
+- `sqlparse` (installed automatically)
+- At least one of: GNU recutils (`apt install recutils` / `brew install recutils`) or `python-recutils` (`pip install recdb[recutils]`)
 
 ## Stability and 1.0 release
 
