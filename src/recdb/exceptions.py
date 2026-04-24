@@ -42,7 +42,6 @@ class RecutilsError(RecDBError):
 
 
 class RecutilsNotFoundError(RecDBError):
-    """Raised when GNU recutils is not found on PATH and the operation
-    requires it (i.e. a write or a query that cannot be served by the
-    pure-Python read-only fallback).
+    """Raised when neither GNU recutils nor the python-recutils package is
+    available and an operation is attempted that requires one of them.
     """
