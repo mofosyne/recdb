@@ -23,10 +23,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ._expr import build_expr as _build_expr, like_to_regex as _like_to_regex
+from ._expr import build_expr as _build_expr
 
 try:
-    from recutils.parser import parse as _ru_parse, Field as _RuField
+    from recutils.recsel import recsel as _ru_recsel
     from recutils.recins import recins as _ru_recins
     from recutils.recset import recset as _ru_recset
     from recutils.recdel import recdel as _ru_recdel
@@ -70,7 +70,6 @@ def select(rec_file: Path, table: str, ast: dict) -> list[dict]:
     expr = _build_expr(ast["where"])
     sort_field = ast.get("order_by")
 
-    from recutils.recsel import recsel as _ru_recsel
     result = _ru_recsel(
         content,
         record_type=table,
@@ -133,7 +132,6 @@ def update(rec_file: Path, table: str, ast: dict) -> int:
     rec_file.write_text(content, encoding="utf-8")
 
     # Count affected rows by re-selecting with the same WHERE
-    from recutils.recsel import recsel as _ru_recsel
     result = _ru_recsel(content, record_type=table, expression=expr)
     return len(result.records)
 
@@ -148,7 +146,6 @@ def delete(rec_file: Path, table: str, ast: dict) -> int:
     expr = _build_expr(ast["where"]) or None
 
     # Count rows before deletion
-    from recutils.recsel import recsel as _ru_recsel
     before = _ru_recsel(content, record_type=table, expression=expr)
     count = len(before.records)
 
