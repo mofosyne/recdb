@@ -23,7 +23,7 @@ that the recfile backend cannot handle.
 import re
 import sqlparse
 from sqlparse.sql import Where, Identifier, IdentifierList
-from sqlparse.tokens import Keyword, DML, Wildcard
+from sqlparse.tokens import Keyword, DML, Name, Wildcard
 from typing import Any
 
 from .exceptions import SQLParseError, UnsupportedSQLError
@@ -203,7 +203,6 @@ def _parse_select(stmt, raw_sql: str) -> dict:
 
 
 def _extract_columns(flat, from_idx) -> list[str]:
-    from sqlparse.tokens import Name
     cols = []
     for t in flat[1:from_idx]:
         if t.ttype is Wildcard:
