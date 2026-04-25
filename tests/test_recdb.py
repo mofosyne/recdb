@@ -5,10 +5,12 @@ Test suite for recdb.
 
 Structure
 ---------
-- ``conn`` fixture is parametrised over both backends so every shared test
-  runs against recfile AND stdlib sqlite3.
-- Tests that assert behaviour specific to one backend are marked with
-  ``pytest.mark`` or placed in dedicated sections.
+- ``conn`` fixture is parametrised over three backends so every shared test
+  runs against: GNU recutils, python-recutils fallback, and stdlib sqlite3.
+- The ``pyrecutils`` param hides GNU recutils from PATH via monkeypatch so
+  the python-recutils fallback is exercised identically to the real thing.
+- Tests that assert behaviour specific to one backend are placed in dedicated
+  sections (single-file, directory mode, pyrecutils-specific).
 - Row access always uses key names (``row["stock"]``), never index
   (``row[0]``), since that's the common subset of recdb dicts and
   sqlite3.Row objects.
@@ -52,13 +54,18 @@ def sqlite_conn(path: str):
     return conn
 
 
-@pytest.fixture(params=["recfile", "sqlite"])
-def conn(request, tmp_path):
+@pytest.fixture(params=["recfile", "pyrecutils", "sqlite"])
+def conn(request, tmp_path, monkeypatch):
     """
-    Parametrised fixture — runs every test against both backends.
-    recfile uses recdb.connect(); sqlite uses stdlib sqlite3 directly.
+    Parametrised fixture — runs every shared test against all three backends:
+      recfile     — GNU recutils subprocess backend
+      pyrecutils  — python-recutils fallback (GNU recutils hidden from PATH)
+      sqlite      — stdlib sqlite3
     """
-    if request.param == "recfile":
+    if request.param == "pyrecutils":
+        monkeypatch.setenv("PATH", "")
+
+    if request.param in ("recfile", "pyrecutils"):
         c = recdb.connect(str(tmp_path / "items.rec"))
     else:
         c = sqlite_conn(str(tmp_path / "inventory.db"))

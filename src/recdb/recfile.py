@@ -137,7 +137,7 @@ class RecfileCursor(BaseCursor):
         if ast["if_not_exists"] and self._table_exists(ast["table"], rec_file):
             return
 
-        if not shutil.which("recsel") is not None:
+        if shutil.which("recsel") is None:
             if _pyrec.available():
                 _pyrec.create_table(rec_file, ast["table"], ast)
                 return
