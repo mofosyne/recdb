@@ -25,7 +25,7 @@ from typing import Any, Optional
 from .base import BaseConnection, BaseCursor
 from .exceptions import RecutilsError, RecutilsNotFoundError
 from . import pyrecutils_backend as _pyrec
-from ._expr import build_expr as _build_expr_fn, like_to_regex as _like_to_regex
+from ._expr import build_expr as _build_expr_fn
 from .parser import parse
 
 
