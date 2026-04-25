@@ -63,7 +63,8 @@ def conn(request, tmp_path, monkeypatch):
       sqlite      — stdlib sqlite3
     """
     if request.param == "pyrecutils":
-        monkeypatch.setenv("PATH", "")
+        import recdb.recfile as _rf
+        monkeypatch.setattr(_rf.shutil, "which", lambda _: None)
 
     if request.param in ("recfile", "pyrecutils"):
         c = recdb.connect(str(tmp_path / "items.rec"))
@@ -502,8 +503,12 @@ def test_single_file_if_not_exists_idempotent(tmp_path):
 
 @pytest.fixture
 def no_recutils(monkeypatch):
-    """Hide GNU recutils from PATH so the python-recutils fallback is used."""
-    monkeypatch.setenv("PATH", "")
+    """Hide GNU recutils so the python-recutils fallback is used."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    # Also patch within recfile module since it imports shutil at the top
+    import recdb.recfile as _rf
+    monkeypatch.setattr(_rf.shutil, "which", lambda _: None)
 
 
 @pytest.fixture
