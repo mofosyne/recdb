@@ -191,7 +191,7 @@ class RecfileCursor(BaseCursor):
         if ast["columns"] != ["*"]:
             cmd += ["-p", ",".join(ast["columns"])]
 
-        expr = self._build_expr(ast["where"])
+        expr = _build_expr_fn(ast["where"])
         if expr:
             cmd += ["-e", expr]
 
@@ -247,7 +247,7 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return 0
 
-        expr = self._build_expr(ast["where"])
+        expr = _build_expr_fn(ast["where"])
 
         if shutil.which("recsel") is not None:
             for col, val in ast["assignments"]:
@@ -277,7 +277,7 @@ class RecfileCursor(BaseCursor):
         if not rec_file.exists():
             return 0
 
-        expr = self._build_expr(ast["where"])
+        expr = _build_expr_fn(ast["where"])
 
         if shutil.which("recsel") is not None:
             before = self._select({
@@ -302,9 +302,6 @@ class RecfileCursor(BaseCursor):
         )
 
     # --- helpers ------------------------------------------------------------
-
-    def _build_expr(self, conditions: list[dict]) -> str:
-        return _build_expr_fn(conditions)
 
     def _rec_path(self, table: str) -> Path:
         if self._single_file is not None:
