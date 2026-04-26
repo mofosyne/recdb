@@ -111,6 +111,9 @@ Unsupported constructs raise `UnsupportedSQLError`. Malformed SQL raises
 - `recdel` with no expression is a no-op in `python-recutils` — the
   delete-all case uses `indexes="0-999999"` instead.
 - `-R` in recsel means "print-row", not "reverse" — we avoid it.
+- `UPDATE` rowcount is derived from a follow-up `recsel` after `recset`
+  completes. Under concurrent access this could be inaccurate; for the
+  single-user recfile use case it is acceptable.
 
 ### Rows as dicts
 
@@ -152,6 +155,13 @@ expression syntax is generated identically.
 The `python-recutils` package is beta quality and has limited uptake. It is
 treated as a convenience rather than a fully supported path — users who hit
 edge cases are expected to install GNU recutils.
+
+**Version constraint:** `python-recutils` currently requires Python 3.12+.
+This is why recdb's own `requires-python` is `>=3.12` and the CI matrix
+only tests 3.12. If `python-recutils` drops this constraint in a future
+release, recdb could reasonably be tested against 3.10 and 3.11 again —
+the core recdb code uses only `str | None` union syntax (3.10+) and no
+3.12-specific features.
 
 ### Custom exception hierarchy
 
@@ -197,9 +207,12 @@ The parser uses `sqlparse` for tokenisation rather than writing a
 hand-rolled tokeniser or pulling in a heavier SQL parser. This keeps the
 mandatory dependency footprint to one package. The tradeoff is that
 `sqlparse` is a tokeniser/formatter rather than a full parser, so some
-constructs require regex fallbacks inside `parser.py`. If the SQL subset
-grows significantly, replacing the parser internals with a grammar-based
-approach (e.g. `lark`) would be worth considering.
+constructs require regex fallbacks inside `parser.py` — UPDATE, DELETE,
+WHERE, and CREATE TABLE are all parsed with `re.match` after `sqlparse`
+hands back the token stream. This is fragile at the edges but has proven
+sufficient for the supported SQL subset. If the subset grows significantly
+(e.g. adding subqueries, OR, IN), replacing the parser internals with a
+grammar-based approach (e.g. `lark`) would be worth considering.
 
 ---
 
@@ -222,13 +235,20 @@ the SQL syntax.
 
 **Batch `recset` calls**
 `UPDATE SET a=1, b=2` currently makes two `recset` subprocess calls.
-recutils supports multiple `-f/-s` pairs in one call; the backend just
-needs to build the command correctly.
+recutils supports multiple `-f/-s` pairs in one invocation:
+`recset -t table -e expr -f a -s 1 -f b -s 2 file.rec`.
+The fix is in `RecfileCursor._update` — accumulate all `-f/-s` pairs
+into a single `cmd` list rather than looping with one call per field.
+The python-recutils backend (`pyrecutils_backend.update`) has the same
+pattern and would need the same fix.
 
 **`rowcount` for UPDATE**
-Currently derived via a follow-up SELECT after `recset`. The count could
-be captured before the update instead, which is slightly more correct
-under concurrent access.
+Currently derived via a follow-up `recsel` after `recset` completes.
+Capturing the count with a `recsel` *before* the update would be more
+correct — count what matches the WHERE clause, apply the change, return
+that number. As-is, the count reflects the post-update state which is
+usually the same but technically wrong if another writer races in between.
+Low priority for the single-user use case.
 
 ### Medium-term
 
@@ -248,10 +268,11 @@ file shared between backends.
 
 ### Longer-term
 
-**Migration helper**
-`recdb.migrate("inventory.rec", "inventory.db")` — copy all data from
-one backend to the other. Makes the "graduated to SQLite" transition
-explicit and safe.
+**Migration helper** *(implemented in v0.2.0)*
+`recdb.migrate(src, dst)` copies all data between recfile and SQLite in
+either direction, inferring direction from file extensions. Schema is
+inferred from `%type:` descriptors or SQLite's `PRAGMA table_info`.
+Best-effort — foreign keys, indexes, and constraints are not migrated.
 
 **Connection pooling / thread safety**
 The recfile backend is not thread-safe — concurrent writes to the same

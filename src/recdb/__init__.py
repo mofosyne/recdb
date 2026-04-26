@@ -36,10 +36,12 @@ from .exceptions import (
     RecutilsNotFoundError,
 )
 from .recfile import RecfileConnection
+from .migrate import migrate
 from . import pyrecutils_backend as _pyrec
 
 __all__ = [
     "connect",
+    "migrate",
     "RecfileConnection",
     "BaseConnection",
     "BaseCursor",
@@ -90,12 +92,10 @@ def connect(path: str) -> "RecfileConnection":
     p = Path(path)
 
     if p.suffix.lower() == ".rec":
-        # Single-file mode
         return RecfileConnection(
             str(p.parent),
             default_table=p.stem,
             single_file=str(p),
         )
     else:
-        # Directory mode
         return RecfileConnection(path, default_table=None)

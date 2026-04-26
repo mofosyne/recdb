@@ -600,3 +600,154 @@ def test_pyrecutils_multiple_tables(tmp_path, no_recutils):
     assert items[0]["name"] == "Widget"
     assert suppliers[0]["name"] == "Acme"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Migration — recdb.migrate()
+# ---------------------------------------------------------------------------
+
+LIBRARY_REC = """\
+%rec: books
+%type: year int
+%type: copies int
+%mandatory: isbn title author year copies
+
+isbn: 978-0-7432-7356-5
+title: The Road
+author: Cormac McCarthy
+year: 2006
+copies: 3
+
+isbn: 978-0-14-028329-7
+title: Slaughterhouse-Five
+author: Kurt Vonnegut
+year: 1969
+copies: 2
+
+%rec: borrowers
+%mandatory: member_id name
+
+member_id: M001
+name: Alice Nguyen
+
+member_id: M002
+name: Bob Okafor
+"""
+
+
+def test_migrate_recfile_to_sqlite(tmp_path):
+    """recfile single-file → SQLite: all tables and data transferred."""
+    rec_path = tmp_path / "library.rec"
+    db_path  = tmp_path / "library.db"
+    rec_path.write_text(LIBRARY_REC)
+
+    counts = recdb.migrate(str(rec_path), str(db_path))
+
+    assert counts == {"books": 2, "borrowers": 2}
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    books = con.execute("SELECT * FROM books ORDER BY year").fetchall()
+    assert len(books) == 2
+    assert books[0]["title"] == "Slaughterhouse-Five"
+    assert isinstance(books[0]["year"], int)     # type preserved from %type:
+    assert isinstance(books[0]["copies"], int)
+    borrowers = con.execute("SELECT * FROM borrowers").fetchall()
+    assert len(borrowers) == 2
+    con.close()
+
+
+def test_migrate_recfile_dir_to_sqlite(tmp_path):
+    """recfile directory mode → SQLite: each .rec file becomes a table."""
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    (db_dir / "books.rec").write_text(LIBRARY_REC.split("%rec: borrowers")[0])
+    (db_dir / "borrowers.rec").write_text(
+        "%rec: borrowers\n\nmember_id: M001\nname: Alice Nguyen\n"
+    )
+    db_path = tmp_path / "library.db"
+
+    counts = recdb.migrate(str(db_dir), str(db_path))
+
+    assert "books" in counts
+    assert "borrowers" in counts
+
+
+def test_migrate_sqlite_to_recfile(tmp_path):
+    """SQLite → recfile single-file: tables written as %rec: blocks."""
+    db_path  = tmp_path / "library.db"
+    rec_path = tmp_path / "library.rec"
+
+    # Build a sqlite source
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE books (isbn TEXT, title TEXT, year INTEGER, copies INTEGER)")
+    con.execute("INSERT INTO books VALUES ('978-0-7432-7356-5', 'The Road', 2006, 3)")
+    con.execute("INSERT INTO books VALUES ('978-0-14-028329-7', 'Slaughterhouse-Five', 1969, 2)")
+    con.execute("CREATE TABLE borrowers (member_id TEXT, name TEXT)")
+    con.execute("INSERT INTO borrowers VALUES ('M001', 'Alice Nguyen')")
+    con.commit()
+    con.close()
+
+    counts = recdb.migrate(str(db_path), str(rec_path))
+
+    assert counts == {"books": 2, "borrowers": 1}
+
+    content = rec_path.read_text()
+    assert "%rec: books" in content
+    assert "%rec: borrowers" in content
+    assert "The Road" in content
+    assert "Alice Nguyen" in content
+    assert "%type: year int" in content    # INTEGER → %type int
+    assert "%type: copies int" in content
+
+
+def test_migrate_sqlite_to_recfile_dir(tmp_path):
+    """SQLite → recfile directory: each table written to its own .rec file."""
+    db_path = tmp_path / "library.db"
+    dst_dir = tmp_path / "out"
+
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE items (name TEXT, stock INTEGER)")
+    con.execute("INSERT INTO items VALUES ('Widget', 50)")
+    con.commit()
+    con.close()
+
+    counts = recdb.migrate(str(db_path), str(dst_dir))
+
+    assert counts == {"items": 1}
+    assert (dst_dir / "items.rec").exists()
+    content = (dst_dir / "items.rec").read_text()
+    assert "Widget" in content
+    assert "%type: stock int" in content
+
+
+def test_migrate_same_type_raises(tmp_path):
+    """migrate() raises ValueError when both paths are the same backend type."""
+    with pytest.raises(ValueError, match="direction"):
+        recdb.migrate(str(tmp_path / "a.rec"), str(tmp_path / "b.rec"))
+
+    with pytest.raises(ValueError, match="direction"):
+        recdb.migrate(str(tmp_path / "a.db"), str(tmp_path / "b.db"))
+
+
+def test_migrate_missing_sqlite_src_raises(tmp_path):
+    """migrate() raises FileNotFoundError for a non-existent SQLite source."""
+    with pytest.raises(FileNotFoundError):
+        recdb.migrate(str(tmp_path / "missing.db"), str(tmp_path / "out.rec"))
+
+
+def test_migrate_roundtrip(tmp_path):
+    """Data survives a full recfile → sqlite → recfile roundtrip."""
+    rec_src  = tmp_path / "src.rec"
+    db_mid   = tmp_path / "mid.db"
+    rec_dst  = tmp_path / "dst.rec"
+
+    rec_src.write_text(LIBRARY_REC)
+
+    recdb.migrate(str(rec_src), str(db_mid))
+    recdb.migrate(str(db_mid),  str(rec_dst))
+
+    content = rec_dst.read_text()
+    assert "The Road" in content
+    assert "Slaughterhouse-Five" in content
+    assert "Alice Nguyen" in content
