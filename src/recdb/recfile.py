@@ -29,11 +29,6 @@ from ._expr import build_expr as _build_expr_fn
 from .parser import parse
 
 
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # Cursor
 # ---------------------------------------------------------------------------
@@ -385,4 +380,3 @@ class RecfileConnection(BaseConnection):
 
     def rollback(self) -> None:
         pass
-

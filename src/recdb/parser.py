@@ -23,7 +23,7 @@ that the recfile backend cannot handle.
 import re
 import sqlparse
 from sqlparse.sql import Where, Identifier, IdentifierList
-from sqlparse.tokens import Keyword, DML, Name, Wildcard
+from sqlparse.tokens import Keyword, Name, Wildcard
 from typing import Any
 
 from .exceptions import SQLParseError, UnsupportedSQLError

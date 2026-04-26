@@ -184,7 +184,6 @@ def _collect_rec_files(src: Path) -> list[Path]:
     return []
 
 
-
 def _union_columns(records: list[dict]) -> list[str]:
     """Return all field names across all records, preserving first-seen order."""
     seen: set[str] = set()

@@ -192,5 +192,3 @@ def create_table(rec_file: Path, table: str, ast: dict) -> None:
             f.write(header)
     else:
         rec_file.write_text(header, encoding="utf-8")
-
-
