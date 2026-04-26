@@ -248,10 +248,11 @@ file shared between backends.
 
 ### Longer-term
 
-**Migration helper**
-`recdb.migrate("inventory.rec", "inventory.db")` — copy all data from
-one backend to the other. Makes the "graduated to SQLite" transition
-explicit and safe.
+**Migration helper** *(implemented in v0.2.0)*
+`recdb.migrate(src, dst)` copies all data between recfile and SQLite in
+either direction, inferring direction from file extensions. Schema is
+inferred from `%type:` descriptors or SQLite's `PRAGMA table_info`.
+Best-effort — foreign keys, indexes, and constraints are not migrated.
 
 **Connection pooling / thread safety**
 The recfile backend is not thread-safe — concurrent writes to the same

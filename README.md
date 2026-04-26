@@ -170,7 +170,7 @@ print(row["name"])    # works
 print(row["stock"])   # works
 ```
 
-See [COMPATIBILITY.md](COMPATIBILITY.md) for a full table of deviations from stdlib `sqlite3`.
+See [COMPAT.md](COMPAT.md) for a full table of deviations from stdlib `sqlite3`.
 
 ## Exceptions
 
@@ -199,6 +199,38 @@ except recdb.RecDBError:
 | `UnsupportedSQLError`   | Valid SQL that the recfile backend does not support (JOIN, OR, etc.) |
 | `RecutilsError`         | A recutils subprocess exited with a non-zero return code             |
 | `RecutilsNotFoundError` | Neither GNU recutils nor python-recutils is available                |
+
+## Migrating between backends
+
+`recdb.migrate()` copies data between recfile and SQLite in either direction.
+Direction is inferred from the file extension, consistent with `connect()`.
+
+```python
+import recdb
+
+# recfile → SQLite
+recdb.migrate("inventory.rec", "inventory.db")   # single-file recfile
+recdb.migrate("./data",        "inventory.db")   # directory of .rec files
+
+# SQLite → recfile
+recdb.migrate("inventory.db",  "inventory.rec")  # single-file recfile
+recdb.migrate("inventory.db",  "./data")          # directory of .rec files
+```
+
+Returns a dict of `{table_name: row_count}` so you can confirm what was moved:
+
+```python
+counts = recdb.migrate("inventory.rec", "inventory.db")
+# {"items": 120, "suppliers": 8}
+```
+
+Migration is **best-effort**. Schema is inferred from the data — column types
+come from `%type:` descriptors (recfile → SQLite) or `PRAGMA table_info`
+(SQLite → recfile). Tables with no rows are skipped. Things that are not
+migrated: foreign keys, indexes, check constraints, SQLite autoincrement,
+recutils `%auto:` fields. Review the output after migrating.
+
+For recfile → SQLite, `recdb.migrate()` uses GNU recutils if available, falling back to `python-recutils` if not. At least one must be installed.
 
 ## When to switch to SQLite
 

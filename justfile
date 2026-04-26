@@ -22,42 +22,34 @@ setup:
     @echo ""
     @echo "Done. To activate manually: source {{venv}}/bin/activate"
 
-# Run the full test suite against both backends
+# Run the full test suite (all three backends)
 test:
     {{pytest}} -v
 
-# Run tests against recfile backend only
-test-recfile:
-    {{pytest}} -v -k "recfile"
-
-# Run tests against sqlite backend only
-test-sqlite:
-    {{pytest}} -v -k "sqlite"
-
-# Run the inventory demo
+# Run the library demo against all three modes
 demo:
-    DBPATH=./examples/data/ {{python}} examples/library_demo.py
+    {{python}} examples/library_demo.py
 
-# Run the inventory demo — recfile backend only
+# Run the demo — single-file recfile only
 demo-recfile:
-    DBTYPE=recfile DBPATH=./examples/data/ {{python}} examples/library_demo.py
+    DBTYPE=recfile {{python}} examples/library_demo.py
 
-# Run the inventory demo — recfile backend only
+# Run the demo — directory mode only
 demo-recfile-dir:
-    DBTYPE=recfile-dir DBPATH=./examples/data/ {{python}} examples/library_demo.py
+    DBTYPE=recfile-dir {{python}} examples/library_demo.py
 
-# Run the demo — sqlite backend only
+# Run the demo — sqlite only
 demo-sqlite:
-    DBTYPE=sqlite DBPATH=./examples/data/ {{python}} examples/library_demo.py
+    DBTYPE=sqlite {{python}} examples/library_demo.py
 
-# Check recutils is installed (required for recfile backend)
+# Check recutils is installed (recommended for recfile backend)
 check-recutils:
     @which recsel recins recset recdel > /dev/null 2>&1 \
         && echo "✓ recutils is installed" \
         || (echo "✗ recutils not found — install it:" \
             && echo "    Ubuntu/Debian: sudo apt install recutils" \
             && echo "    macOS:         brew install recutils" \
-            && exit 1)
+            && echo "  (python-recutils fallback is available via dev deps)")
 
 # Build a distribution for PyPI
 build:
@@ -73,7 +65,7 @@ publish-test:
 # Upload to PyPI
 publish:
     {{pip}} install twine -q
-    {{python}} -m twine upload --verbose dist/*
+    {{python}} -m twine upload dist/*
 
 # Remove venv and build artifacts
 clean:
