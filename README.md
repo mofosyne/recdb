@@ -170,7 +170,7 @@ print(row["name"])    # works
 print(row["stock"])   # works
 ```
 
-See [COMPAT.md](COMPAT.md) for a full table of deviations from stdlib `sqlite3`.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for a full table of deviations from stdlib `sqlite3`.
 
 ## Exceptions
 

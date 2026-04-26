@@ -8,7 +8,7 @@ before making a significant change.
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - [`just`](https://github.com/casey/just) task runner
   - Ubuntu/Debian: `sudo apt install just`
   - macOS: `brew install just`
